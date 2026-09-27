@@ -3,7 +3,8 @@ import pygame
 from forest_fire_env import ForestFireEnv
 
 if __name__ == "__main__":
-    # 1. Instantiate the environment with render_mode="human"
+
+    # Instantiate the environment
     env = ForestFireEnv(render_mode="human", grid_size=15, p_spread=0.1, max_steps=100)
     obs, info = env.reset()
 
@@ -15,6 +16,7 @@ if __name__ == "__main__":
 
     # Main Simulation Loop
     while not done:
+
         # Sample a random action
         action = env.action_space.sample()
         
@@ -24,7 +26,7 @@ if __name__ == "__main__":
         # Render the current step
         env.render()
         
-        # Control simulation speed (e.g., 0.1s delay per step)
+        # Control simulation speed
         time.sleep(0.5)
         
         total_reward += reward
@@ -34,7 +36,7 @@ if __name__ == "__main__":
     print(f"Final Info: {info}")
     print("Simulation completed. Close the Pygame window to exit.")
 
-    # Keep window open until manually closed by user
+    # Keep window open until manually closed
     running = True
     while running:
         for event in pygame.event.get():
