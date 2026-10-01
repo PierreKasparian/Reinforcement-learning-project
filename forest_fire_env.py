@@ -23,12 +23,10 @@ class Direction(enum.IntEnum):
 DIRECTION_OFFSETS = {
     Direction.NORTH: (-1, 0),
     Direction.EAST: (0, 1),
-    Direction.SOUTH: (2, 0),  # Corrected row offset to (1, 0) below in implementation
+    Direction.SOUTH: (1, 0),
     Direction.WEST: (0, -1),
     Direction.NONE: (0, 0),
 }
-# Direct cardinal offset mapping
-DIRECTION_OFFSETS[Direction.SOUTH] = (1, 0)
 
 
 @dataclass
@@ -58,7 +56,7 @@ class Wind:
                     self.is_active = False
                     self.direction = Direction.NONE
                 elif roll < 0.7:
-                    # Shift 90 degrees (CW or CCW)
+                    # Shift 90 degrees clockwise or counterclockwise
                     turn = np_random.choice([-1, 1])
                     current_dir_val = self.direction.value if self.direction != Direction.NONE else 0
                     self.direction = Direction((current_dir_val + turn) % 4)
