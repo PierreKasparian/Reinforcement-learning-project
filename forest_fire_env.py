@@ -65,7 +65,7 @@ class Rain:
     def __init__(
         self,
         intensity: float = 5.0,     # Moisture units added per step during rain
-        is_active: bool = False,
+        is_active: bool = True,
         rain_prob: float = 0.2,      # Chance of rain starting/stopping
     ):
         self.intensity = intensity
@@ -169,7 +169,7 @@ class ForestFireEnv(gym.Env):
         self.moisture = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
         self.burn_rate = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
 
-        # Initialize wind (starts active based on wind_prob)
+        # Initialize wind
         is_active = bool(self.np_random.random() < 0.6)  # 60% chance starting with wind
         initial_dir = Direction(self.np_random.integers(0, 4)) if is_active else Direction.NONE
 
@@ -195,7 +195,7 @@ class ForestFireEnv(gym.Env):
     def _calculate_wind_modifier(self, source_r: int, source_c: int, target_r: int, target_c: int) -> float:
         """Calculates spread multiplier. Returns 1.0 when calm."""
         if not self.wind.is_active or self.wind.direction == Direction.NONE:
-            return 1.0  # No wind bias applied
+            return 1.0
 
         spread_dr = target_r - source_r
         spread_dc = target_c - source_c
@@ -225,7 +225,7 @@ class ForestFireEnv(gym.Env):
 
     def _update_environmental_factors(self):
         """Step environmental forces like Wind and Rain."""
-        # 1. Step rain & apply moisture
+        # Rain & apply moisture
         self.rain.step(self.np_random)
 
         if self.rain.is_active:
@@ -239,7 +239,7 @@ class ForestFireEnv(gym.Env):
                             self.moisture[r, c] + added_moisture
                         )
 
-        # 2. Step wind
+        # Wind
         self.wind.step(self.np_random, transition_prob=0.15)
 
     def _get_obs(self):
@@ -273,7 +273,7 @@ class ForestFireEnv(gym.Env):
         }
 
     def _spread_fire(self):
-        # 1. Step wind (allows gradual adjacent direction shifts)
+        # Wind
         self.wind.step(self.np_random, transition_prob=0.15)
 
         burning_coords = np.argwhere(self.grid == CellState.BURNING)
@@ -358,14 +358,13 @@ class ForestFireEnv(gym.Env):
 
             info = self._get_info()
 
-            # Format wind string for Option A
+            # Format wind string
             if info["wind_direction"] in ["NONE", "CALM"] or info["wind_speed"] == 0.0:
                 wind_str = "CALM (0.0)"
             else:
                 wind_str = f"{info['wind_direction']} ({info['wind_speed']:.1f})"
 
             # Pass positional arguments in exact order expected by ForestFireRenderer:
-            # render(grid, burn_rates, moisture, ...)
             self.renderer.render(
                 self.grid,
                 self.burn_rate,
