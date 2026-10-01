@@ -23,8 +23,8 @@ WIND_FACTOR = 1.0        # Spread impact multiplier (1.0 = +100% downwind, -100%
 
 # Rain Mechanics
 START_WITH_RAIN = True   # Force rain ON at step 0 (True / False)
-RAIN_INTENSITY = 0.2     # Moisture units added per cell per step during rain
-RAIN_PROB = 0.5          # Probability of rain naturally starting/stopping per check
+RAIN_INTENSITY = 0.1     # Moisture units added per cell per step during rain
+RAIN_PROB = 0.2          # Probability of rain naturally starting/stopping per check
 
 
 if __name__ == "__main__":

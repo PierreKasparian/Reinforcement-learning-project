@@ -22,7 +22,7 @@ class ForestFireRenderer:
         self.WATER_TINT = np.array([100, 200, 255])
         
         # Rain visual settings
-        self.RAIN_OVERLAY_COLOR = (50, 100, 200, 35)  # Semi-transparent blue tint
+        self.RAIN_OVERLAY_COLOR = (50, 100, 200, 35)  # Semi-transparent blue tint overlay
         self.RAIN_DROP_COLOR = (180, 220, 255, 150)
 
         self.window = None
@@ -46,7 +46,7 @@ class ForestFireRenderer:
         moisture,
         wind_direction="NORTH",
         wind_speed=1.0,
-        wind_info=None,          # Option A: Added wind_info support
+        wind_info=None,
         rain_active=False,
         rain_intensity=0.0,
         mode="human",
@@ -65,7 +65,7 @@ class ForestFireRenderer:
         canvas = pygame.Surface((self.window_size, self.window_size))
         canvas.fill((255, 255, 255))
 
-        # 1. Draw Grid Cells
+        # Draw Grid Cells
         for r in range(self.grid_size):
             for c in range(self.grid_size):
                 state_val = grid[r, c]
@@ -86,7 +86,7 @@ class ForestFireRenderer:
                 pygame.draw.rect(canvas, color, rect)
                 pygame.draw.rect(canvas, (200, 200, 200), rect, 1)
 
-        # 2. Draw Rain Overlay Effects (if active)
+        # Draw Rain Overlay Effects
         if rain_active:
             rain_surface = pygame.Surface((self.window_size, self.window_size), pygame.SRCALPHA)
             rain_surface.fill(self.RAIN_OVERLAY_COLOR)
@@ -107,7 +107,7 @@ class ForestFireRenderer:
 
             canvas.blit(rain_surface, (0, 0))
 
-        # 3. Draw Telemetry HUD Overlay
+        # Draw Telemetry HUD Overlay
         if mode == "human" and self.font is not None:
             # Check wind_info first; fallback to direction/speed if wind_info is None
             if wind_info is not None:
