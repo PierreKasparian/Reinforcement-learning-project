@@ -61,6 +61,38 @@ class Wind:
                     current_dir_val = self.direction.value if self.direction != Direction.NONE else 0
                     self.direction = Direction((current_dir_val + turn) % 4)
 
+class Rain:
+    def __init__(
+        self,
+        intensity: float = 5.0,     # Moisture units added per step during rain
+        is_active: bool = False,
+        rain_prob: float = 0.2,      # Chance of rain starting/stopping
+    ):
+        self.intensity = intensity
+        self.is_active = is_active
+        self.rain_prob = rain_prob
+
+    def step(self, np_random: np.random.Generator, transition_prob: float = 0.1):
+        """Randomly toggles rain state on/off."""
+        if np_random.random() < transition_prob:
+            if not self.is_active:
+                if np_random.random() < self.rain_prob:
+                    self.is_active = True
+            else:
+                if np_random.random() < 0.4:  # Chance rain stops
+                    self.is_active = False
+
+    def get_moisture_increase(self, r: int, c: int, grid_shape: tuple) -> float:
+        """
+        Returns moisture added to cell (r, c) this step.
+        Uniform full-grid coverage for now.
+        """
+        if not self.is_active:
+            return 0.0
+
+        # Full-grid uniform coverage
+        return self.intensity
+
 
 class ForestFireEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 10}
@@ -77,6 +109,9 @@ class ForestFireEnv(gym.Env):
         burn_acceleration=1.5,
         wind_speed=1.0,
         wind_factor=0.08,  # Scaling factor for wind influence on spread
+        rain_intensity: float = 5.0,
+        rain_prob: float = 0.2,
+        **kwargs
     ):
         super().__init__()
         self.grid_size = grid_size
@@ -94,6 +129,10 @@ class ForestFireEnv(gym.Env):
         self.wind_factor = wind_factor
         self.default_wind_speed = wind_speed
         self.wind = Wind(direction=Direction.NORTH, speed=self.default_wind_speed)
+
+        #Rain dynamics
+        self.rain_intensity = rain_intensity
+        self.rain = Rain(intensity=rain_intensity, rain_prob=rain_prob)
 
         # State matrices
         self.grid = None
@@ -184,6 +223,25 @@ class ForestFireEnv(gym.Env):
             self.grid[r, c] = CellState.WET
             self.burn_rate[r, c] = 0.0
 
+    def _update_environmental_factors(self):
+        """Step environmental forces like Wind and Rain."""
+        # 1. Step rain & apply moisture
+        self.rain.step(self.np_random)
+
+        if self.rain.is_active:
+            for r in range(self.grid_size):
+                for c in range(self.grid_size):
+                    added_moisture = self.rain.get_moisture_increase(r, c, (self.grid_size, self.grid_size))
+                    if added_moisture > 0:
+                        # Uses your existing moisture method/array
+                        self.moisture[r, c] = min(
+                            self.max_moisture, 
+                            self.moisture[r, c] + added_moisture
+                        )
+
+        # 2. Step wind
+        self.wind.step(self.np_random, transition_prob=0.15)
+
     def _get_obs(self):
         obs = np.zeros((6, self.grid_size, self.grid_size), dtype=np.float32)
 
@@ -210,6 +268,8 @@ class ForestFireEnv(gym.Env):
             "total_moisture": float(np.sum(self.moisture)),
             "wind_direction": "CALM" if not self.wind.is_active else self.wind.direction.name,
             "wind_speed": self.wind.speed if self.wind.is_active else 0.0,
+            "rain_active": self.rain.is_active,
+            "rain_intensity": self.rain.intensity if self.rain.is_active else 0.0,
         }
 
     def _spread_fire(self):
@@ -288,15 +348,35 @@ class ForestFireEnv(gym.Env):
         return self._get_obs(), 0.0, terminated, truncated, self._get_info()
 
     def render(self):
-        if self.renderer is not None:
-            return self.renderer.render(
-                grid=self.grid,
-                burn_rates=self.burn_rate,
-                moisture=self.moisture,
-                wind_direction=self.wind.direction.name,
-                wind_speed=self.wind.speed,
+        if self.render_mode == "human":
+            if self.renderer is None:
+                from render import ForestFireRenderer
+                self.renderer = ForestFireRenderer(
+                    grid_size=self.grid_size,
+                    max_moisture=self.max_moisture,
+                )
+
+            info = self._get_info()
+
+            # Format wind string for Option A
+            if info["wind_direction"] in ["NONE", "CALM"] or info["wind_speed"] == 0.0:
+                wind_str = "CALM (0.0)"
+            else:
+                wind_str = f"{info['wind_direction']} ({info['wind_speed']:.1f})"
+
+            # Pass positional arguments in exact order expected by ForestFireRenderer:
+            # render(grid, burn_rates, moisture, ...)
+            self.renderer.render(
+                self.grid,
+                self.burn_rate,
+                self.moisture,
+                wind_direction=info["wind_direction"],
+                wind_speed=info["wind_speed"],
+                wind_info=wind_str,
+                rain_active=self.rain.is_active,
+                rain_intensity=self.rain.intensity,
                 mode=self.render_mode,
-            )
+        )
 
     def close(self):
         if self.renderer is not None:
