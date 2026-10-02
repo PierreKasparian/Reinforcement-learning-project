@@ -57,6 +57,13 @@ def test_noop():
     assert info["last_action"].type == ActionType.NOOP
 
 
+def test_rain_reset():
+    env = make_env()
+    env.rain.is_active = True
+    env.reset(seed=0)
+    assert env.rain.is_active is False
+
+
 def test_water_drop_on_fire():
     env = make_env(p_spread=0.0)
     center = env.grid_size // 2
@@ -186,12 +193,33 @@ def test_fire_truck_on_burning_cell():
     env = make_env(p_spread=0.0)
     center = env.grid_size // 2
     idx = encode_action(ActionSpec(ActionType.FIRE_TRUCK, center, center), env.grid_size)
-    assert not env.action_masks()[idx]
+    assert env.action_masks()[idx]
 
+    budget_before = env.budget_remaining
     obs, reward, terminated, truncated, info = env.step(idx)
-    assert reward == -env.invalid_action_penalty
-    assert env.grid[center, center] == CellState.BURNING
-    assert env.budget_remaining == env.max_budget
+    assert reward == 0.0
+    assert info["action_valid"] is True
+    assert env.budget_remaining == budget_before - ACTION_COSTS[ActionType.FIRE_TRUCK]
+
+
+def test_fire_truck_reduces_burn_rate():
+    env = make_env(p_spread=0.0)
+    center = env.grid_size // 2
+    spec = ActionSpec(ActionType.FIRE_TRUCK, center, center)
+    env._apply_fire_truck(spec)
+    assert env.burn_rate[center, center] < env.base_burn_rate
+    assert env.moisture[center, center] == env.truck_amount
+
+
+def test_fire_truck_on_wet_cell():
+    env = make_env(p_spread=0.0)
+    env.grid[2, 2] = CellState.WET
+    idx = encode_action(ActionSpec(ActionType.FIRE_TRUCK, 2, 2), env.grid_size)
+    assert env.action_masks()[idx]
+
+    moisture_before = env.moisture[2, 2]
+    env.step(idx)
+    assert env.moisture[2, 2] == min(env.max_moisture, moisture_before + env.truck_amount)
 
 
 def test_unaffordable_action():
@@ -214,7 +242,7 @@ def test_budget_exhausted_termination():
     assert info["failure_reason"] == "budget_exhausted"
 
 
-def test_last_action_fire_out_with_zero_budget():
+def test_last_action_extinguish_with_zero_budget():
     env = make_env(p_spread=0.0)
     center = env.grid_size // 2
     env.moisture[center, center] = env.max_moisture - 1.0
@@ -228,7 +256,7 @@ def test_last_action_fire_out_with_zero_budget():
     obs, reward, terminated, truncated, info = env.step(idx)
     assert env.budget_remaining == 0
     assert terminated
-    assert info["failure_reason"] == "fire_out"
+    assert info["failure_reason"] is None
     assert np.sum(env.grid == CellState.BURNING) == 0
 
 

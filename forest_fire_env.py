@@ -134,9 +134,10 @@ class ForestFireEnv(gym.Env):
         self.default_wind_speed = wind_speed
         self.wind = Wind(direction=Direction.NORTH, speed=self.default_wind_speed)
 
-        #Rain dynamics
+        # Rain dynamics
         self.rain_intensity = rain_intensity
-        self.rain = Rain(intensity=rain_intensity, rain_prob=rain_prob)
+        self.rain_prob = rain_prob
+        self.rain = Rain(intensity=rain_intensity, rain_prob=rain_prob, is_active=False)
 
         # Suppression resources
         self.max_water_drops = max_water_drops
@@ -193,6 +194,13 @@ class ForestFireEnv(gym.Env):
             speed=self.default_wind_speed,
             is_active=is_active,
             wind_prob=0.6,
+        )
+
+        # Initialize rain
+        self.rain = Rain(
+            intensity=self.rain_intensity,
+            rain_prob=self.rain_prob,
+            is_active=False,
         )
 
         # Suppression resources
@@ -281,7 +289,11 @@ class ForestFireEnv(gym.Env):
         if spec.type == ActionType.FIRE_TRUCK:
             if not self.fire_truck_available:
                 return False
-            return self.grid[spec.r, spec.c] == CellState.HEALTHY
+            return self.grid[spec.r, spec.c] in (
+                CellState.HEALTHY,
+                CellState.BURNING,
+                CellState.WET,
+            )
 
         return False
 
@@ -319,7 +331,8 @@ class ForestFireEnv(gym.Env):
                 for c in range(self.grid_size):
                     added_moisture = self.rain.get_moisture_increase(r, c, (self.grid_size, self.grid_size))
                     if added_moisture > 0:
-                        # Uses your existing moisture method/array
+                        # TODO: route rain through add_moisture so saturated cells
+                        # transition to CellState.WET like action-based wetting.
                         self.moisture[r, c] = min(
                             self.max_moisture, 
                             self.moisture[r, c] + added_moisture
@@ -392,6 +405,8 @@ class ForestFireEnv(gym.Env):
                     self.burn_rate[r, c] = 0.0
                     continue
 
+                # TODO: implement global moisture evaporation outside rain
+                # (moisture currently only decreases on burning cells).
                 self.moisture[r, c] = max(0.0, self.moisture[r, c] - 2.0)
 
             # Fuel consumption
@@ -404,6 +419,8 @@ class ForestFireEnv(gym.Env):
                 self.grid[r, c] = CellState.BURNT
                 self.burn_rate[r, c] = 0.0
 
+                # TODO: align with spec: BURNT cells should still spread fire with a lower probability
+                # instead of this deterministic fuel-exhaustion ignition.
                 # Fuel exhaustion spread: Force ignite adjacent healthy trees
                 for nr, nc in neighbors:
                     if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
@@ -463,6 +480,7 @@ class ForestFireEnv(gym.Env):
         healthy_trees = np.sum(self.grid == CellState.HEALTHY)
         budget_exhausted = self.budget_remaining == 0 and active_fires > 0
 
+        # TODO: add failure termination when the burned area reaches the grid edge.
         terminated = active_fires == 0 or healthy_trees == 0 or budget_exhausted
         truncated = self.current_step >= self.max_steps
 
