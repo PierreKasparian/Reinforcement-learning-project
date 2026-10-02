@@ -64,7 +64,6 @@ if __name__ == "__main__":
             step_count += 1
 
             # Advance environmental state & fire spread
-            env._update_environmental_factors()
             obs, reward, terminated, truncated, info = env.step(0)
             env.render()
 
