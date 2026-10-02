@@ -49,6 +49,7 @@ class ForestFireRenderer:
         wind_info=None,
         rain_active=False,
         rain_intensity=0.0,
+        resources=None,
         mode="human",
     ):
         if self.window is None and mode == "human":
@@ -128,6 +129,21 @@ class ForestFireRenderer:
             pygame.draw.rect(canvas, hud_bg_color, padding_rect)
             pygame.draw.rect(canvas, (100, 100, 100), padding_rect, 1)
             canvas.blit(text_surface, (10, 10))
+
+            if resources is not None:
+                resources_text = (
+                    f"BUDGET: {resources['budget_remaining']}  |  "
+                    f"DROPS: {resources['water_drops_remaining']}  |  "
+                    f"FIREBREAK: {resources['firebreak_capacity']}  |  "
+                    f"AIRCRAFT: {'YES' if resources['aircraft_available'] else 'NO'}  |  "
+                    f"TRUCK: {'YES' if resources['fire_truck_available'] else 'NO'}"
+                )
+                resources_y = padding_rect.bottom + 6
+                resources_surface = self.font.render(resources_text, True, (0, 0, 0), hud_bg_color)
+                resources_rect = resources_surface.get_rect(topleft=(10, resources_y)).inflate(8, 6)
+                pygame.draw.rect(canvas, hud_bg_color, resources_rect)
+                pygame.draw.rect(canvas, (100, 100, 100), resources_rect, 1)
+                canvas.blit(resources_surface, (10, resources_y))
 
         if mode == "human":
             self.window.blit(canvas, (0, 0))
