@@ -273,9 +273,6 @@ class ForestFireEnv(gym.Env):
         }
 
     def _spread_fire(self):
-        # Wind
-        self.wind.step(self.np_random, transition_prob=0.15)
-
         burning_coords = np.argwhere(self.grid == CellState.BURNING)
         new_fires = set()
 
@@ -337,6 +334,7 @@ class ForestFireEnv(gym.Env):
 
     def step(self, action):
         self.current_step += 1
+        self._update_environmental_factors()
         self._spread_fire()
 
         active_fires = np.sum(self.grid == CellState.BURNING)
