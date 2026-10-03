@@ -105,3 +105,6 @@ $RECYCLE.BIN/
 *.msi
 *.msm
 *.msp
+
+# Simulation logs
+simulation_log.txt

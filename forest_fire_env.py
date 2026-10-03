@@ -1,9 +1,21 @@
 import enum
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Tuple
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+
+from actions import (
+    ACTION_COSTS,
+    ActionSpec,
+    ActionType,
+    Direction,
+    DIRECTION_OFFSETS,
+    decode_action,
+    line_cells,
+    n_actions,
+)
+
 
 class CellState(enum.IntEnum):
     BURNT = 0
@@ -11,22 +23,6 @@ class CellState(enum.IntEnum):
     BURNING = 2
     FIREBREAK = 3
     WET = 4
-
-class Direction(enum.IntEnum):
-    NORTH = 0  # (-1, 0)
-    EAST = 1   # (0, 1)
-    SOUTH = 2  # (1, 0)
-    WEST = 3   # (0, -1)
-    NONE = 4   # Calm / No wind
-
-
-DIRECTION_OFFSETS = {
-    Direction.NORTH: (-1, 0),
-    Direction.EAST: (0, 1),
-    Direction.SOUTH: (1, 0),
-    Direction.WEST: (0, -1),
-    Direction.NONE: (0, 0),
-}
 
 
 @dataclass
@@ -111,6 +107,14 @@ class ForestFireEnv(gym.Env):
         wind_factor=0.08,  # Scaling factor for wind influence on spread
         rain_intensity: float = 5.0,
         rain_prob: float = 0.2,
+        max_water_drops: int = 8,
+        max_firebreak_capacity: int = 10,
+        max_budget: int = 100,
+        action_costs=None,
+        water_drop_amount: float = 25.0,
+        truck_amount: float = 15.0,
+        invalid_action_penalty: float = 1.0,
+        line_half_length: int = 2,
         **kwargs
     ):
         super().__init__()
@@ -130,9 +134,20 @@ class ForestFireEnv(gym.Env):
         self.default_wind_speed = wind_speed
         self.wind = Wind(direction=Direction.NORTH, speed=self.default_wind_speed)
 
-        #Rain dynamics
+        # Rain dynamics
         self.rain_intensity = rain_intensity
-        self.rain = Rain(intensity=rain_intensity, rain_prob=rain_prob)
+        self.rain_prob = rain_prob
+        self.rain = Rain(intensity=rain_intensity, rain_prob=rain_prob, is_active=False)
+
+        # Suppression resources
+        self.max_water_drops = max_water_drops
+        self.max_firebreak_capacity = max_firebreak_capacity
+        self.max_budget = max_budget
+        self.action_costs = dict(ACTION_COSTS if action_costs is None else action_costs)
+        self.water_drop_amount = water_drop_amount
+        self.truck_amount = truck_amount
+        self.invalid_action_penalty = invalid_action_penalty
+        self.line_half_length = line_half_length
 
         # State matrices
         self.grid = None
@@ -141,15 +156,16 @@ class ForestFireEnv(gym.Env):
         self.burn_rate = None
         self.current_step = 0
 
-        # Observation Space: 6 channels (Fuel, Moisture, Intensity, Firebreak, Wet, Wind Channel)
+        # Observation Space: 11 channels (Fuel, Moisture, Intensity, Firebreak, Wet,
+        # Wind, Water Drops, Firebreak Capacity, Aircraft, Truck, Budget)
         self.observation_space = spaces.Box(
             low=0.0,
             high=1.0,
-            shape=(6, self.grid_size, self.grid_size),
+            shape=(11, self.grid_size, self.grid_size),
             dtype=np.float32,
         )
 
-        self.action_space = spaces.Discrete(1)
+        self.action_space = spaces.Discrete(n_actions(self.grid_size))
 
         self.renderer = None
         if self.render_mode is not None:
@@ -179,6 +195,24 @@ class ForestFireEnv(gym.Env):
             is_active=is_active,
             wind_prob=0.6,
         )
+
+        # Initialize rain
+        self.rain = Rain(
+            intensity=self.rain_intensity,
+            rain_prob=self.rain_prob,
+            is_active=False,
+        )
+
+        # Suppression resources
+        self.water_drops_remaining = self.max_water_drops
+        self.firebreak_capacity = self.max_firebreak_capacity
+        self.aircraft_available = True # no restrictions implemented for the moment
+        self.fire_truck_available = True
+        self.budget_remaining = self.max_budget
+
+        self.last_action = ActionSpec(ActionType.NOOP)
+        self.action_valid = True
+        self.failure_reason = None
 
         center = self.grid_size // 2
         self.grid[center, center] = CellState.BURNING
@@ -223,6 +257,70 @@ class ForestFireEnv(gym.Env):
             self.grid[r, c] = CellState.WET
             self.burn_rate[r, c] = 0.0
 
+    def _action_cost(self, spec: ActionSpec) -> int:
+        """Return the budget cost of the given action."""
+        return self.action_costs[spec.type]
+
+    def _is_action_valid(self, spec: ActionSpec) -> bool:
+        """Check budget, resources and targets to decide if the action is legal."""
+        if spec.type == ActionType.NOOP:
+            return True
+
+        if self._action_cost(spec) > self.budget_remaining:
+            return False
+
+        if spec.type == ActionType.WATER_DROP:
+            if not (self.aircraft_available and self.water_drops_remaining > 0):
+                return False
+            cells = line_cells(spec, self.grid_size, self.line_half_length)
+            return any(self.grid[r, c] in (CellState.HEALTHY, CellState.BURNING) for r, c in cells)
+
+        if spec.type == ActionType.FIREBREAK:
+            if self.firebreak_capacity <= 0:
+                return False
+            cells = line_cells(spec, self.grid_size, self.line_half_length)
+            if any(self.grid[r, c] == CellState.BURNING for r, c in cells):
+                return False
+            return any(
+                self.grid[r, c] in (CellState.HEALTHY, CellState.WET, CellState.BURNT)
+                for r, c in cells
+            )
+
+        if spec.type == ActionType.FIRE_TRUCK:
+            if not self.fire_truck_available:
+                return False
+            return self.grid[spec.r, spec.c] in (
+                CellState.HEALTHY,
+                CellState.BURNING,
+                CellState.WET,
+            )
+
+        return False
+
+    def action_masks(self) -> np.ndarray:
+        """Boolean mask of valid actions for masked action selection."""
+        mask = np.zeros(self.action_space.n, dtype=bool)
+        for idx in range(self.action_space.n):
+            mask[idx] = self._is_action_valid(decode_action(idx, self.grid_size))
+        return mask
+
+    def _apply_water_drop(self, spec: ActionSpec):
+        """Add water moisture along the target line."""
+        for r, c in line_cells(spec, self.grid_size, self.line_half_length):
+            self.add_moisture(r, c, self.water_drop_amount)
+
+    def _apply_fire_truck(self, spec: ActionSpec):
+        """Add fire truck moisture to its single target cell."""
+        self.add_moisture(spec.r, spec.c, self.truck_amount)
+
+    def _apply_firebreak(self, spec: ActionSpec):
+        """Turn non-burning, non-firebreak cells along the target line into firebreaks."""
+        for r, c in line_cells(spec, self.grid_size, self.line_half_length):
+            if self.grid[r, c] in (CellState.HEALTHY, CellState.WET, CellState.BURNT):
+                self.grid[r, c] = CellState.FIREBREAK
+                self.fuel[r, c] = 0.0
+                self.burn_rate[r, c] = 0.0
+
     def _update_environmental_factors(self):
         """Step environmental forces like Wind and Rain."""
         # Rain & apply moisture
@@ -233,7 +331,8 @@ class ForestFireEnv(gym.Env):
                 for c in range(self.grid_size):
                     added_moisture = self.rain.get_moisture_increase(r, c, (self.grid_size, self.grid_size))
                     if added_moisture > 0:
-                        # Uses your existing moisture method/array
+                        # TODO: route rain through add_moisture so saturated cells
+                        # transition to CellState.WET like action-based wetting.
                         self.moisture[r, c] = min(
                             self.max_moisture, 
                             self.moisture[r, c] + added_moisture
@@ -243,7 +342,7 @@ class ForestFireEnv(gym.Env):
         self.wind.step(self.np_random, transition_prob=0.15)
 
     def _get_obs(self):
-        obs = np.zeros((6, self.grid_size, self.grid_size), dtype=np.float32)
+        obs = np.zeros((11, self.grid_size, self.grid_size), dtype=np.float32)
 
         obs[0] = self.fuel / self.max_fuel
         obs[1] = self.moisture / self.max_moisture
@@ -254,6 +353,13 @@ class ForestFireEnv(gym.Env):
         
         # Channel 5: Wind direction indicator (4.0 / 4.0 = 1.0 for CALM / NONE)
         obs[5] = self.wind.direction.value / 4.0
+
+        # Channels 6-10: resource levels, broadcast over the grid
+        obs[6] = self.water_drops_remaining / self.max_water_drops
+        obs[7] = self.firebreak_capacity / self.max_firebreak_capacity
+        obs[8] = float(self.aircraft_available)
+        obs[9] = float(self.fire_truck_available)
+        obs[10] = self.budget_remaining / self.max_budget
 
         return obs
 
@@ -270,6 +376,16 @@ class ForestFireEnv(gym.Env):
             "wind_speed": self.wind.speed if self.wind.is_active else 0.0,
             "rain_active": self.rain.is_active,
             "rain_intensity": self.rain.intensity if self.rain.is_active else 0.0,
+            "resources": {
+                "water_drops_remaining": self.water_drops_remaining,
+                "firebreak_capacity": self.firebreak_capacity,
+                "aircraft_available": self.aircraft_available,
+                "fire_truck_available": self.fire_truck_available,
+                "budget_remaining": self.budget_remaining,
+            },
+            "action_valid": self.action_valid,
+            "last_action": self.last_action,
+            "failure_reason": self.failure_reason,
         }
 
     def _spread_fire(self):
@@ -289,6 +405,8 @@ class ForestFireEnv(gym.Env):
                     self.burn_rate[r, c] = 0.0
                     continue
 
+                # TODO: implement global moisture evaporation outside rain
+                # (moisture currently only decreases on burning cells).
                 self.moisture[r, c] = max(0.0, self.moisture[r, c] - 2.0)
 
             # Fuel consumption
@@ -301,6 +419,8 @@ class ForestFireEnv(gym.Env):
                 self.grid[r, c] = CellState.BURNT
                 self.burn_rate[r, c] = 0.0
 
+                # TODO: align with spec: BURNT cells should still spread fire with a lower probability
+                # instead of this deterministic fuel-exhaustion ignition.
                 # Fuel exhaustion spread: Force ignite adjacent healthy trees
                 for nr, nc in neighbors:
                     if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
@@ -335,15 +455,43 @@ class ForestFireEnv(gym.Env):
     def step(self, action):
         self.current_step += 1
         self._update_environmental_factors()
+        spec = decode_action(int(action), self.grid_size)
+        self.last_action = spec
+
+        if not self._is_action_valid(spec):
+            self.action_valid = False
+            reward = -self.invalid_action_penalty
+        else:
+            self.action_valid = True
+            reward = 0.0 # to define later
+            if spec.type == ActionType.WATER_DROP:
+                self._apply_water_drop(spec)
+                self.water_drops_remaining -= 1
+            elif spec.type == ActionType.FIREBREAK:
+                self._apply_firebreak(spec)
+                self.firebreak_capacity -= 1
+            elif spec.type == ActionType.FIRE_TRUCK:
+                self._apply_fire_truck(spec)
+            self.budget_remaining -= self._action_cost(spec)
+
         self._spread_fire()
 
         active_fires = np.sum(self.grid == CellState.BURNING)
         healthy_trees = np.sum(self.grid == CellState.HEALTHY)
+        budget_exhausted = self.budget_remaining == 0 and active_fires > 0
 
-        terminated = active_fires == 0 or healthy_trees == 0
+        # TODO: add failure termination when the burned area reaches the grid edge.
+        terminated = active_fires == 0 or healthy_trees == 0 or budget_exhausted
         truncated = self.current_step >= self.max_steps
 
-        return self._get_obs(), 0.0, terminated, truncated, self._get_info()
+        self.failure_reason = None
+        if terminated:
+            if healthy_trees == 0:
+                self.failure_reason = "no_healthy"
+            elif budget_exhausted:
+                self.failure_reason = "budget_exhausted"
+
+        return self._get_obs(), reward, terminated, truncated, self._get_info()
 
     def render(self):
         if self.render_mode == "human":
@@ -372,6 +520,7 @@ class ForestFireEnv(gym.Env):
                 wind_info=wind_str,
                 rain_active=self.rain.is_active,
                 rain_intensity=self.rain.intensity,
+                resources=info["resources"],
                 mode=self.render_mode,
         )
 
