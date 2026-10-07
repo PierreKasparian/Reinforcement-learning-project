@@ -68,13 +68,8 @@ venv.bak/
 
 # Visual Studio Code
 
-.vscode/*
-.vscode/*
-.vscode/settings.json
-.vscode/tasks.json
-.vscode/launch.json
-.vscode/extensions.json
-.vscode/*.code-snippets
+.vscode/
+
 
 # User-specific VS Code data
 *.code-workspace
