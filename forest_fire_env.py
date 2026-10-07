@@ -126,6 +126,7 @@ class ForestFireEnv(gym.Env):
         truck_amount: float = 15.0,
         invalid_action_penalty: float = 1.0,
         line_half_length: int = 2,
+        dry_rate: float = 1.0,
         reward_weights=None,
         **kwargs
     ):
@@ -150,6 +151,9 @@ class ForestFireEnv(gym.Env):
         self.rain_intensity = rain_intensity
         self.rain_prob = rain_prob
         self.rain = Rain(intensity=rain_intensity, rain_prob=rain_prob, is_active=False)
+
+        self.dry_rate = dry_rate
+        self._watered_this_step = np.zeros((self.grid_size, self.grid_size), dtype=bool)
 
         # Suppression resources
         self.max_water_drops = max_water_drops
@@ -200,6 +204,7 @@ class ForestFireEnv(gym.Env):
         self.initial_total_fuel = float(np.sum(self.fuel, dtype=np.float64))
         self.moisture = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
         self.burn_rate = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
+        self._watered_this_step = np.zeros((self.grid_size, self.grid_size), dtype=bool)
 
         # Initialize wind
         is_active = bool(self.np_random.random() < 0.6)  # 60% chance starting with wind
@@ -236,6 +241,8 @@ class ForestFireEnv(gym.Env):
 
         return self._get_obs(), self._get_info()
 
+    # ------- Environment -------
+
     def get_wind_vector_at(self, r: int, c: int) -> Tuple[float, float]:
         """Returns normalized (dr, dc) wind vector at cell (r, c)."""
         if not self.wind.is_active or self.wind.direction == Direction.NONE:
@@ -264,6 +271,7 @@ class ForestFireEnv(gym.Env):
             return
 
         self.moisture[r, c] = min(self.max_moisture, self.moisture[r, c] + amount)
+        self._watered_this_step[r, c] = True
 
         if self.grid[r, c] == CellState.BURNING:
             suppression = amount * 0.1
@@ -272,6 +280,45 @@ class ForestFireEnv(gym.Env):
         if self.moisture[r, c] >= self.max_moisture:
             self.grid[r, c] = CellState.WET
             self.burn_rate[r, c] = 0.0
+
+    def _apply_drying(self):
+        """Gradually reduces moisture towards 0 for cells not actively receiving water"""
+
+        if self.dry_rate <= 0:
+            return
+
+        # Find cells that have moisture and were NOT watered during this step
+        dry_mask = (self.moisture > 0.0) & (~self._watered_this_step)
+
+        # Decrease moisture towards 0
+        self.moisture[dry_mask] = np.maximum(0.0, self.moisture[dry_mask] - self.dry_rate)
+
+        # Revert WET cells back to HEALTHY if moisture drops below max_moisture
+        wet_and_drying = dry_mask & (self.grid == CellState.WET) & (self.moisture < self.max_moisture)
+        self.grid[wet_and_drying] = CellState.HEALTHY
+
+    def _update_environmental_factors(self):
+        """Step environmental forces like Wind and Rain."""
+
+        self._watered_this_step.fill(False)
+
+        # Rain & apply moisture
+        self.rain.step(self.np_random)
+
+        if self.rain.is_active:
+            for r in range(self.grid_size):
+                for c in range(self.grid_size):
+                    added_moisture = self.rain.get_moisture_increase(r, c, (self.grid_size, self.grid_size))
+                    if added_moisture > 0:
+                        self.moisture[r, c] = min(
+                            self.max_moisture,
+                            self.moisture[r, c] + added_moisture
+                        )
+
+        # Wind
+        self.wind.step(self.np_random, transition_prob=0.15)
+
+    # ------- Actions -------
 
     def _action_cost(self, spec: ActionSpec) -> int:
         """Return the budget cost of the given action."""
@@ -337,26 +384,6 @@ class ForestFireEnv(gym.Env):
                 self.fuel[r, c] = 0.0
                 self.burn_rate[r, c] = 0.0
 
-    def _update_environmental_factors(self):
-        """Step environmental forces like Wind and Rain."""
-        # Rain & apply moisture
-        self.rain.step(self.np_random)
-
-        if self.rain.is_active:
-            for r in range(self.grid_size):
-                for c in range(self.grid_size):
-                    added_moisture = self.rain.get_moisture_increase(r, c, (self.grid_size, self.grid_size))
-                    if added_moisture > 0:
-                        # TODO: route rain through add_moisture so saturated cells
-                        # transition to CellState.WET like action-based wetting.
-                        self.moisture[r, c] = min(
-                            self.max_moisture, 
-                            self.moisture[r, c] + added_moisture
-                        )
-
-        # Wind
-        self.wind.step(self.np_random, transition_prob=0.15)
-
     def _get_obs(self):
         obs = np.zeros((11, self.grid_size, self.grid_size), dtype=np.float32)
 
@@ -421,8 +448,6 @@ class ForestFireEnv(gym.Env):
                     self.burn_rate[r, c] = 0.0
                     continue
 
-                # TODO: implement global moisture evaporation outside rain
-                # (moisture currently only decreases on burning cells).
                 self.moisture[r, c] = max(0.0, self.moisture[r, c] - 2.0)
 
             # Fuel consumption
@@ -435,8 +460,6 @@ class ForestFireEnv(gym.Env):
                 self.grid[r, c] = CellState.BURNT
                 self.burn_rate[r, c] = 0.0
 
-                # TODO: align with spec: BURNT cells should still spread fire with a lower probability
-                # instead of this deterministic fuel-exhaustion ignition.
                 # Fuel exhaustion spread: Force ignite adjacent healthy trees
                 for nr, nc in neighbors:
                     if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
@@ -552,6 +575,8 @@ class ForestFireEnv(gym.Env):
             elif spec.type == ActionType.FIRE_TRUCK:
                 self._apply_fire_truck(spec)
             self.budget_remaining -= self._action_cost(spec)
+
+        self._apply_drying()
 
         # Separate intervention-related fuel removal from fire damage.
         fuel_before_spread = float(np.sum(self.fuel, dtype=np.float64))

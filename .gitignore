@@ -4,6 +4,9 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+*.pyo
+*.pyd
 
 # C extensions
 *.so
@@ -65,12 +68,8 @@ venv.bak/
 
 # Visual Studio Code
 
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-!.vscode/*.code-snippets
+.vscode/
+
 
 # User-specific VS Code data
 *.code-workspace

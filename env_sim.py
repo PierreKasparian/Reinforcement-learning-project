@@ -26,6 +26,8 @@ START_WITH_RAIN = True   # Force rain ON at step 0 (True / False)
 RAIN_INTENSITY = 0.1     # Moisture units added per cell per step during rain
 RAIN_PROB = 0.2          # Probability of rain naturally starting/stopping per check
 
+DRY_RATE = 1.0
+
 
 if __name__ == "__main__":
     # Instantiate Environment using central configuration parameters
@@ -42,6 +44,7 @@ if __name__ == "__main__":
         wind_factor=WIND_FACTOR,
         rain_intensity=RAIN_INTENSITY,
         rain_prob=RAIN_PROB,
+        dry_rate=DRY_RATE,
     )
 
     obs, info = env.reset()
