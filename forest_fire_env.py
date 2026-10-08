@@ -90,6 +90,17 @@ class Rain:
         return self.intensity
 
 
+@dataclass(frozen=True)
+class RewardWeights:
+    """Configurable weights for the normalized reward components."""
+
+    fire_damage: float = 100.0
+    action_cost: float = 5.0
+    time: float = 1.0
+    success: float = 100.0
+    failure: float = 100.0
+
+
 class ForestFireEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 10}
 
@@ -116,6 +127,7 @@ class ForestFireEnv(gym.Env):
         invalid_action_penalty: float = 1.0,
         line_half_length: int = 2,
         dry_rate: float = 1.0,
+        reward_weights=None,
         **kwargs
     ):
         super().__init__()
@@ -152,6 +164,9 @@ class ForestFireEnv(gym.Env):
         self.truck_amount = truck_amount
         self.invalid_action_penalty = invalid_action_penalty
         self.line_half_length = line_half_length
+        self.reward_weights = (
+            reward_weights if reward_weights is not None else RewardWeights()
+        )
 
         # State matrices
         self.grid = None
@@ -186,6 +201,7 @@ class ForestFireEnv(gym.Env):
 
         self.grid = np.full((self.grid_size, self.grid_size), CellState.HEALTHY, dtype=np.int32)
         self.fuel = np.full((self.grid_size, self.grid_size), self.max_fuel, dtype=np.float32)
+        self.initial_total_fuel = float(np.sum(self.fuel, dtype=np.float64))
         self.moisture = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
         self.burn_rate = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
         self._watered_this_step = np.zeros((self.grid_size, self.grid_size), dtype=bool)
@@ -295,7 +311,7 @@ class ForestFireEnv(gym.Env):
                     added_moisture = self.rain.get_moisture_increase(r, c, (self.grid_size, self.grid_size))
                     if added_moisture > 0:
                         self.moisture[r, c] = min(
-                            self.max_moisture, 
+                            self.max_moisture,
                             self.moisture[r, c] + added_moisture
                         )
 
@@ -475,18 +491,81 @@ class ForestFireEnv(gym.Env):
                 self.grid[r, c] = CellState.BURNING
                 self.burn_rate[r, c] = self.base_burn_rate
 
+    def _calculate_reward(
+        self,
+        *,
+        fuel_before_action,
+        fuel_before_spread,
+        budget_before,
+        active_fires,
+        terminated,
+        truncated,
+    ):
+        """Calculate the reward and expose its components without changing state."""
+        w = self.reward_weights
+        fuel_after = float(np.sum(self.fuel, dtype=np.float64))
+        fuel_scale = max(self.initial_total_fuel, 1e-8)
+        budget_scale = max(float(self.max_budget), 1.0)
+        time_scale = max(int(self.max_steps), 1)
+
+        # Only fuel lost during fire dynamics counts as fire damage.
+        fuel_burned = max(0.0, fuel_before_spread - fuel_after)
+        fuel_removed = max(0.0, fuel_before_action - fuel_before_spread)
+        budget_spent = max(0.0, float(budget_before - self.budget_remaining))
+        preserved_fraction = float(np.clip(fuel_after / fuel_scale, 0.0, 1.0))
+
+        components = {
+            "fire_damage": -w.fire_damage * fuel_burned / fuel_scale,
+            "action_cost": -w.action_cost * budget_spent / budget_scale,
+            "time": -w.time / time_scale if active_fires > 0 else 0.0,
+            "invalid_action": (
+                -float(self.invalid_action_penalty)
+                if not self.action_valid else 0.0
+            ),
+            "terminal": 0.0,
+        }
+
+        outcome = "ongoing"
+        if terminated or truncated:
+            success = (
+                terminated
+                and active_fires == 0
+                and self.failure_reason is None
+                and preserved_fraction > 0.0
+            )
+            if success:
+                components["terminal"] = w.success * preserved_fraction
+                outcome = "success"
+            else:
+                # A time limit reached without success is a failed episode.
+                components["terminal"] = -w.failure
+                outcome = self.failure_reason or (
+                    "timeout" if truncated else "failure"
+                )
+
+        metrics = {
+            "fuel_burned": fuel_burned,
+            "fuel_removed": fuel_removed,
+            "budget_spent": budget_spent,
+            "preserved_fraction": preserved_fraction,
+            "outcome": outcome,
+        }
+        return float(sum(components.values())), components, metrics
+
     def step(self, action):
         self.current_step += 1
         self._update_environmental_factors()
         spec = decode_action(int(action), self.grid_size)
         self.last_action = spec
 
+        # Record resources before applying the intervention.
+        budget_before = self.budget_remaining
+        fuel_before_action = float(np.sum(self.fuel, dtype=np.float64))
+
         if not self._is_action_valid(spec):
             self.action_valid = False
-            reward = -self.invalid_action_penalty
         else:
             self.action_valid = True
-            reward = 0.0 # to define later
             if spec.type == ActionType.WATER_DROP:
                 self._apply_water_drop(spec)
                 self.water_drops_remaining -= 1
@@ -499,6 +578,8 @@ class ForestFireEnv(gym.Env):
 
         self._apply_drying()
 
+        # Separate intervention-related fuel removal from fire damage.
+        fuel_before_spread = float(np.sum(self.fuel, dtype=np.float64))
         self._spread_fire()
 
         active_fires = np.sum(self.grid == CellState.BURNING)
@@ -516,7 +597,19 @@ class ForestFireEnv(gym.Env):
             elif budget_exhausted:
                 self.failure_reason = "budget_exhausted"
 
-        return self._get_obs(), reward, terminated, truncated, self._get_info()
+        reward, components, metrics = self._calculate_reward(
+            fuel_before_action=fuel_before_action,
+            fuel_before_spread=fuel_before_spread,
+            budget_before=budget_before,
+            active_fires=active_fires,
+            terminated=terminated,
+            truncated=truncated,
+        )
+        info = self._get_info()
+        info["reward_components"] = components
+        info["reward_metrics"] = metrics
+
+        return self._get_obs(), reward, terminated, truncated, info
 
     def render(self):
         if self.render_mode == "human":
