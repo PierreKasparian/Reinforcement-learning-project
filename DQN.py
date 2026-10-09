@@ -54,7 +54,7 @@ class DQNAgent:
             next_q_values = self.target_network(next_states)
             
             # Prevent the target network from evaluating invalid future actions
-            next_q_values[~next_masks] = -float('inf')
+            next_q_values = next_q_values.masked_fill(~next_masks, -float('inf'))
             
             max_next_q_values = next_q_values.max(1)[0].unsqueeze(1)
             target_q_values = rewards + (self.gamma * max_next_q_values * (1 - dones))

@@ -14,7 +14,7 @@ class DDQNAgent(DQNAgent):
         with torch.no_grad():
             # Online network selects the best action
             next_q_values_online = self.q_network(next_states)
-            next_q_values_online[~next_masks] = -float('inf')  # Mask invalid actions
+            next_q_values_online = next_q_values_online.masked_fill(~next_masks, -float('inf'))  # Mask invalid actions
             best_next_actions = next_q_values_online.argmax(dim=1).unsqueeze(1)
             
             # Target network evaluates that chosen action
