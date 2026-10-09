@@ -10,19 +10,20 @@ class ReplayBuffer:
     def __init__(self, capacity):
         self.buffer = deque(maxlen=capacity)
     
-    def push(self, state, action, reward, next_state, done):
-        self.buffer.append((state, action, reward, next_state, done))
+    def push(self, state, action, reward, next_state, done, next_mask):
+        self.buffer.append((state, action, reward, next_state, done, next_mask))
         
     def sample(self, batch_size):
         batch = random.sample(self.buffer, batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
+        states, actions, rewards, next_states, dones, next_masks = zip(*batch)
         
         return (
             torch.tensor(np.array(states), dtype=torch.float32).to(device),
             torch.tensor(actions, dtype=torch.int64).unsqueeze(1).to(device),
             torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(device),
             torch.tensor(np.array(next_states), dtype=torch.float32).to(device),
-            torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(device)
+            torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(device),
+            torch.tensor(np.array(next_masks), dtype=torch.bool).to(device)
         )
         
     def __len__(self):

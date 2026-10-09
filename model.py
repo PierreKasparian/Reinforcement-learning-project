@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class WildfireCNNQNetwork(nn.Module):
-    def __init__(self, action_size, grid_size=15, num_channels=4):
+    def __init__(self, action_size, grid_size=15, num_channels=11):
         super().__init__()
         self.grid_size = grid_size
         self.num_channels = num_channels
@@ -24,7 +24,6 @@ class WildfireCNNQNetwork(nn.Module):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         
-        # Flatten the spatial dimensions
         x = x.view(x.size(0), -1)  
         
         x = F.relu(self.fc1(x))

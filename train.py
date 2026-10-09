@@ -4,7 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from DQN import DQNAgent
 from DDQN import DDQNAgent
-from env import ForestFireEnv
+from forest_fire_env import ForestFireEnv
+os.environ["HSA_OVERRIDE_GFX_VERSION"] = "11.0.0"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train RL agent on Wildfire Environment")
@@ -23,7 +24,7 @@ def main():
     # Environment Setup
     env = ForestFireEnv(grid_size=args.grid_size, max_steps=100)
     action_size = env.action_space.n 
-    num_channels = 4
+    num_channels = 11  # Updated to match the new environment's observation space
     
     # Initialize Selected Agent
     AgentClass = DDQNAgent if args.algo == 'ddqn' else DQNAgent
@@ -35,22 +36,30 @@ def main():
     
     # Training Loop
     target_update_freq = 10
-    save_freq = 500
+    save_freq = 400
     episode_rewards = []
     moving_averages = []
     
     print(f"Starting {args.algo.upper()} training on Wildfire Environment...")
     for episode in range(args.episodes):
-        state, _ = env.reset()
+        state, info = env.reset()
         total_reward = 0
         done = False
         
         while not done:
-            action = agent.act(state)
-            next_state, reward, terminated, truncated, _ = env.step(action)
+            # Get valid actions for the current state
+            mask = env.action_masks()
+            
+            # Agent acts based on valid actions
+            action = agent.act(state, action_mask=mask)
+            
+            next_state, reward, terminated, truncated, next_info = env.step(action)
             done = terminated or truncated
             
-            agent.memory.push(state, action, reward, next_state, done)
+            # Get valid actions for the next state to store in the replay buffer
+            next_mask = env.action_masks()
+            
+            agent.memory.push(state, action, reward, next_state, done, next_mask)
             agent.learn()
             
             state = next_state
@@ -67,7 +76,8 @@ def main():
         moving_averages.append(moving_avg)
         
         if (episode + 1) % 10 == 0:
-            print(f"Episode: {episode + 1:3d} | Reward: {total_reward:7.2f} | 100-ep Avg: {moving_avg:7.2f} | Epsilon: {agent.epsilon:.3f}")
+            outcome = next_info.get("reward_metrics", {}).get("outcome", "unknown")
+            print(f"Episode: {episode + 1:3d} | Reward: {total_reward:7.2f} | 100-ep Avg: {moving_avg:7.2f} | Epsilon: {agent.epsilon:.3f} | Outcome: {outcome}")
             
         # Checkpointing
         if (episode + 1) % save_freq == 0:
