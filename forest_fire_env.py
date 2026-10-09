@@ -565,6 +565,7 @@ class ForestFireEnv(gym.Env):
         # Record resources before applying the intervention.
         budget_before = self.budget_remaining
         fuel_before_action = float(np.sum(self.fuel, dtype=np.float64))
+        fires_before = int(np.sum(self.grid == CellState.BURNING))
 
         if not self._is_action_valid(spec):
             self.action_valid = False
@@ -605,6 +606,7 @@ class ForestFireEnv(gym.Env):
             fuel_before_action=fuel_before_action,
             fuel_before_spread=fuel_before_spread,
             budget_before=budget_before,
+            fires_before=fires_before,
             active_fires=active_fires,
             terminated=terminated,
             truncated=truncated,
