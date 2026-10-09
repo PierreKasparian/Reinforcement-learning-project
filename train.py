@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from DQN import DQNAgent
 from DDQN import DDQNAgent
 from rainbow import RainbowAgent
-from env import ForestFireEnv
+from forest_fire_env import ForestFireEnv
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train RL agent on Wildfire Environment")
