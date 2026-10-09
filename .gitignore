@@ -1,5 +1,8 @@
 # Python Standard & Virtual Environments
 
+checkpoints/
+plots/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
