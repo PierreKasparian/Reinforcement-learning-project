@@ -60,9 +60,9 @@ class Wind:
 class Rain:
     def __init__(
         self,
-        intensity: float = 5.0,     # Moisture units added per step during rain
+        intensity: float = 0.5,     # Moisture units added per step during rain
         is_active: bool = True,
-        rain_prob: float = 0.2,      # Chance of rain starting/stopping
+        rain_prob: float = 0.05,      # Chance of rain starting/stopping
     ):
         self.intensity = intensity
         self.is_active = is_active
@@ -94,11 +94,11 @@ class Rain:
 class RewardWeights:
     """Configurable weights for the normalized reward components."""
 
-    fire_damage: float = 100.0
-    action_cost: float = 5.0
-    time: float = 1.0
+    fire_damage: float = 50.0
+    action_cost: float = 1.0
+    time: float = 0.5
     success: float = 100.0
-    failure: float = 100.0
+    failure: float = 50.0
 
 
 class ForestFireEnv(gym.Env):
@@ -389,8 +389,7 @@ class ForestFireEnv(gym.Env):
 
         obs[0] = self.fuel / self.max_fuel
         obs[1] = self.moisture / self.max_moisture
-        max_expected_rate = self.base_burn_rate + (self.burn_acceleration * 20.0)
-        obs[2] = np.clip(self.burn_rate / max_expected_rate, 0.0, 1.0)
+        obs[2] = np.clip(self.burn_rate / self.max_burn_rate, 0.0, 1.0)
         obs[3] = (self.grid == CellState.FIREBREAK).astype(np.float32)
         obs[4] = (self.grid == CellState.WET).astype(np.float32)
         
@@ -518,7 +517,7 @@ class ForestFireEnv(gym.Env):
         fires_extinguished = max(0, fires_before - active_fires)
 
         components = {
-            "extinction": 2.0 * (fires_extinguished / (self.grid_size ** 2)),
+            "extinction": 1.5 * fires_extinguished,
             "fire_damage": -w.fire_damage * fuel_burned / fuel_scale,
             "action_cost": -w.action_cost * budget_spent / budget_scale,
             "time": -w.time / time_scale if active_fires > 0 else 0.0,
