@@ -497,6 +497,7 @@ class ForestFireEnv(gym.Env):
         fuel_before_action,
         fuel_before_spread,
         budget_before,
+        fires_before,
         active_fires,
         terminated,
         truncated,
@@ -514,7 +515,10 @@ class ForestFireEnv(gym.Env):
         budget_spent = max(0.0, float(budget_before - self.budget_remaining))
         preserved_fraction = float(np.clip(fuel_after / fuel_scale, 0.0, 1.0))
 
+        fires_extinguished = max(0, fires_before - active_fires)
+
         components = {
+            "extinction": 2.0 * (fires_extinguished / (self.grid_size ** 2)),
             "fire_damage": -w.fire_damage * fuel_burned / fuel_scale,
             "action_cost": -w.action_cost * budget_spent / budget_scale,
             "time": -w.time / time_scale if active_fires > 0 else 0.0,
