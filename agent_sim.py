@@ -12,9 +12,11 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate Trained RL Agent on Wildfire Environment")
     parser.add_argument('--algo', type=str, default='rainbow', choices=['dqn', 'ddqn', 'rainbow'],
                         help='Algorithm of saved checkpoint')
-    parser.add_argument('--checkpoint', type=str, default='./checkpoints/rainbow_wildfire_ep500.pth',
+    # Updated default to match your 2000-episode run
+    parser.add_argument('--checkpoint', type=str, default='./checkpoints/rainbow_wildfire_ep2000.pth',
                         help='Path to saved agent checkpoint (.pth file)')
-    parser.add_argument('--grid-size', type=int, default=30,
+    # Updated default to 15 to match the new training script
+    parser.add_argument('--grid-size', type=int, default=15,
                         help='Grid size matching the training run')
     parser.add_argument('--delay', type=float, default=0.3,
                         help='Delay in seconds per step for Pygame visual playback')
@@ -35,25 +37,29 @@ def main():
     # Environment Setup
     env = ForestFireEnv(render_mode="human", grid_size=args.grid_size, max_steps=10000)
     action_size = env.action_space.n
-    num_channels = env.observation_space.shape[0]
+    
+    # FIX 1: Extract spatial and global sizes from the new Dict observation space
+    num_spatial = env.observation_space["spatial"].shape[0]
+    num_global = env.observation_space["global"].shape[0]
 
-    # Instantiate Agent
+    # FIX 2: Instantiate Agent with the two-headed network parameters
     if args.algo == 'rainbow':
-        agent = RainbowAgent(action_size, args.grid_size, num_channels)
+        agent = RainbowAgent(action_size, args.grid_size, num_spatial, num_global)
     elif args.algo == 'ddqn':
-        agent = DDQNAgent(action_size, args.grid_size, num_channels)
+        agent = DDQNAgent(action_size, args.grid_size, num_spatial, num_global)
     else:
-        agent = DQNAgent(action_size, args.grid_size, num_channels)
+        agent = DQNAgent(action_size, args.grid_size, num_spatial, num_global)
 
     # Load Checkpoint
     print(f"Loading checkpoint from: {args.checkpoint}")
     agent.load_checkpoint(args.checkpoint)
 
-    # Force pure exploitation mode (zero random exploration)
+    # Force pure exploitation mode (zero random exploration for standard DQN)
     if hasattr(agent, 'epsilon'):
         agent.epsilon = 0.0
 
-    # Ensure network evaluation mode
+    # CRITICAL FIX 3: Ensure network evaluation mode. 
+    # For Rainbow DQN, this disables the stochasticity in the Noisy Networks!
     agent.q_network.eval()
 
     # Run Evaluation Episode
@@ -79,10 +85,10 @@ def main():
         env.render()
 
         if args.save_frames:
-                    frame_path = os.path.join(frame_dir, f"frame_{step_count:04d}.png")
-                    current_screen = pygame.display.get_surface()
-                    if current_screen is not None:
-                        pygame.image.save(current_screen, frame_path)
+            frame_path = os.path.join(frame_dir, f"frame_{step_count:04d}.png")
+            current_screen = pygame.display.get_surface()
+            if current_screen is not None:
+                pygame.image.save(current_screen, frame_path)
 
         state = next_state
         total_reward += reward
@@ -101,7 +107,7 @@ def main():
     print(f"Outcome: {outcome}")
 
     if args.save_frames:
-        print(f"Frames saved to {frame_dir}/. You can compile them into a video using ffmpeg:")
+        print(f"\nFrames saved to {frame_dir}/. You can compile them into a video using ffmpeg:")
         print(f"ffmpeg -framerate 10 -i {frame_dir}/frame_%04d.png -c:v libx264 -pix_fmt yuv420p wildfire_sim.mp4")
 
     env.close()
