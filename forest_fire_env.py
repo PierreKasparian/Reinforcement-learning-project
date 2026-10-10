@@ -189,14 +189,10 @@ class ForestFireEnv(gym.Env):
         self.burn_rate = None
         self.current_step = 0
 
-        # Observation Space: 11 channels (Fuel, Moisture, Intensity, Firebreak, Wet,
-        # Wind, Water Drops, Firebreak Capacity, Aircraft, Truck, Budget)
-        self.observation_space = spaces.Box(
-            low=0.0,
-            high=1.0,
-            shape=(11, self.grid_size, self.grid_size),
-            dtype=np.float32,
-        )
+        self.observation_space = spaces.Dict({
+            "spatial": spaces.Box(low=0.0, high=1.0, shape=(5, self.grid_size, self.grid_size), dtype=np.float32),
+            "global": spaces.Box(low=0.0, high=1.0, shape=(6,), dtype=np.float32)
+        })
 
         self.action_space = spaces.Discrete(n_actions(self.grid_size))
 
@@ -414,26 +410,24 @@ class ForestFireEnv(gym.Env):
                 self.burn_rate[r, c] = 0.0
 
     def _get_obs(self):
-        obs = np.zeros((11, self.grid_size, self.grid_size), dtype=np.float32)
-
-        obs[0] = self.fuel / self.max_fuel
-        obs[1] = self.moisture / self.max_moisture
+        spatial = np.zeros((5, self.grid_size, self.grid_size), dtype=np.float32)
+        spatial[0] = self.fuel / self.max_fuel
+        spatial[1] = self.moisture / self.max_moisture
         max_expected_rate = self.base_burn_rate + (self.burn_acceleration * 20.0)
-        obs[2] = np.clip(self.burn_rate / max_expected_rate, 0.0, 1.0)
-        obs[3] = (self.grid == CellState.FIREBREAK).astype(np.float32)
-        obs[4] = (self.grid == CellState.WET).astype(np.float32)
+        spatial[2] = np.clip(self.burn_rate / max_expected_rate, 0.0, 1.0)
+        spatial[3] = (self.grid == CellState.FIREBREAK).astype(np.float32)
+        spatial[4] = (self.grid == CellState.WET).astype(np.float32)
         
-        # Channel 5: Wind direction indicator (4.0 / 4.0 = 1.0 for CALM / NONE)
-        obs[5] = self.wind.direction.value / 4.0
+        global_obs = np.array([
+            self.wind.direction.value / 4.0,
+            self.water_drops_remaining / self.max_water_drops,
+            self.firebreak_capacity / self.max_firebreak_capacity,
+            float(self.aircraft_available),
+            float(self.fire_truck_available),
+            self.budget_remaining / self.max_budget
+        ], dtype=np.float32)
 
-        # Channels 6-10: resource levels, broadcast over the grid
-        obs[6] = self.water_drops_remaining / self.max_water_drops
-        obs[7] = self.firebreak_capacity / self.max_firebreak_capacity
-        obs[8] = float(self.aircraft_available)
-        obs[9] = float(self.fire_truck_available)
-        obs[10] = self.budget_remaining / self.max_budget
-
-        return obs
+    return {"spatial": spatial, "global": global_obs}
 
     def _get_info(self):
         return {
