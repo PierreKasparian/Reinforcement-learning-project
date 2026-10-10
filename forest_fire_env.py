@@ -94,11 +94,11 @@ class Rain:
 class RewardWeights:
     """Configurable weights for the normalized reward components."""
 
-    fire_damage: float = 150.0
-    action_cost: float = 1.0
-    time: float = 0.5
-    success: float = 100.0
-    failure: float = 50.0
+    fire_damage: float = 1.5
+    action_cost: float = 0.01
+    time: float = 0.005
+    success: float = 1.0
+    failure: float = 0.5
 
 
 class ForestFireEnv(gym.Env):
@@ -128,7 +128,6 @@ class ForestFireEnv(gym.Env):
         action_costs=None,
         water_drop_amount=50.0,
         truck_amount=35.0,
-        invalid_action_penalty=0.5,
         dry_rate=0.5,
         reward_weights=None,
         **kwargs
@@ -177,7 +176,6 @@ class ForestFireEnv(gym.Env):
         self.budget_replenish_rate = budget_replenish_rate
         self.water_drop_cooldown = water_drop_cooldown
         self.cooldown_counter = cooldown_counter
-        self.invalid_action_penalty = invalid_action_penalty
         self.reward_weights = (
             reward_weights if reward_weights is not None else RewardWeights()
         )
@@ -427,7 +425,7 @@ class ForestFireEnv(gym.Env):
             self.budget_remaining / self.max_budget
         ], dtype=np.float32)
 
-    return {"spatial": spatial, "global": global_obs}
+        return {"spatial": spatial, "global": global_obs}
 
     def _get_info(self):
         return {
@@ -455,58 +453,68 @@ class ForestFireEnv(gym.Env):
         }
 
     def _spread_fire(self):
-        burning_coords = np.argwhere(self.grid == CellState.BURNING)
+        # Handle Extinguishing and Fuel Consumption Vectorized
+        burning_mask = (self.grid == CellState.BURNING)
+        
+        # Moisture extinction probabilities
+        p_extinguish = np.zeros_like(self.moisture)
+        moisture_active = burning_mask & (self.moisture > 0)
+        p_extinguish[moisture_active] = self.moisture[moisture_active] / (
+            self.moisture[moisture_active] + self.burn_rate[moisture_active] * 10.0
+        )
+        
+        # Random rolls for extinguishing
+        rolls = self.np_random.random(size=self.grid.shape)
+        extinguished_mask = moisture_active & (rolls < p_extinguish)
+        
+        self.grid[extinguished_mask] = CellState.HEALTHY
+        self.burn_rate[extinguished_mask] = 0.0
+        
+        # Decrease moisture where not extinguished
+        still_burning_mask = burning_mask & ~extinguished_mask
+        self.moisture[still_burning_mask] = np.maximum(0.0, self.moisture[still_burning_mask] - 2.0)
+        
+        # Consume fuel
+        self.fuel[still_burning_mask] -= self.burn_rate[still_burning_mask]
+        self.burn_rate[still_burning_mask] += self.burn_acceleration
+        
+        # Burnout (Fuel <= 0)
+        burnout_mask = still_burning_mask & (self.fuel <= 0.0)
+        self.fuel[burnout_mask] = 0.0
+        self.grid[burnout_mask] = CellState.BURNT
+        self.burn_rate[burnout_mask] = 0.0
+
+        # Spread to Neighbors 
         new_fires = set()
+        
+        # Forced spread from trees that just burnt out
+        burnout_coords = np.argwhere(burnout_mask)
+        for r, c in burnout_coords:
+            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
+                    if self.grid[nr, nc] == CellState.HEALTHY:
+                        new_fires.add((nr, nc))
 
-        for r, c in burning_coords:
-            # Moisture extinction
-            if self.moisture[r, c] >= self.max_moisture:
-                self.grid[r, c] = CellState.WET
-                self.burn_rate[r, c] = 0.0
-                continue
-            elif self.moisture[r, c] > 0.0:
-                p_extinguish = self.moisture[r, c] / (self.moisture[r, c] + self.burn_rate[r, c] * 10.0)
-                if self.np_random.random() < p_extinguish:
-                    self.grid[r, c] = CellState.HEALTHY
-                    self.burn_rate[r, c] = 0.0
-                    continue
+        # Probabilistic spread from currently active fires
+        active_coords = np.argwhere(still_burning_mask & ~burnout_mask)
+        for r, c in active_coords:
+            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
+                    if self.grid[nr, nc] == CellState.HEALTHY:
+                        moisture_factor = 1.0 - (self.moisture[nr, nc] / self.max_moisture)
+                        wind_mod = self._calculate_wind_modifier(r, c, nr, nc)
 
-                self.moisture[r, c] = max(0.0, self.moisture[r, c] - 2.0)
+                        effective_p = (
+                            self.p_spread
+                            * (1.0 + 0.05 * self.burn_rate[r, c])
+                            * moisture_factor
+                            * wind_mod
+                        )
 
-            # Fuel consumption
-            self.fuel[r, c] -= self.burn_rate[r, c]
-
-            neighbors = [(r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)]
-
-            if self.fuel[r, c] <= 0.0:
-                self.fuel[r, c] = 0.0
-                self.grid[r, c] = CellState.BURNT
-                self.burn_rate[r, c] = 0.0
-
-                # Fuel exhaustion spread: Force ignite adjacent healthy trees
-                for nr, nc in neighbors:
-                    if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
-                        if self.grid[nr, nc] == CellState.HEALTHY:
+                        if self.np_random.random() < min(1.0, effective_p):
                             new_fires.add((nr, nc))
-            else:
-                self.burn_rate[r, c] += self.burn_acceleration
-
-                # Probabilistic spread with wind and moisture factors
-                for nr, nc in neighbors:
-                    if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
-                        if self.grid[nr, nc] == CellState.HEALTHY:
-                            moisture_factor = 1.0 - (self.moisture[nr, nc] / self.max_moisture)
-                            wind_mod = self._calculate_wind_modifier(r, c, nr, nc)
-
-                            effective_p = (
-                                self.p_spread
-                                * (1.0 + 0.05 * self.burn_rate[r, c])
-                                * moisture_factor
-                                * wind_mod
-                            )
-
-                            if self.np_random.random() < min(1.0, effective_p):
-                                new_fires.add((nr, nc))
 
         # Apply new ignitions
         for r, c in new_fires:
@@ -544,10 +552,6 @@ class ForestFireEnv(gym.Env):
             "fire_damage": -w.fire_damage * fuel_burned / fuel_scale,
             "action_cost": -w.action_cost * budget_spent / budget_scale,
             "time": -w.time / time_scale if active_fires > 0 else 0.0,
-            "invalid_action": (
-                -float(self.invalid_action_penalty)
-                if not self.action_valid else 0.0
-            ),
             "terminal": 0.0,
         }
 
