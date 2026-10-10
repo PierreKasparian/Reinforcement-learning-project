@@ -108,25 +108,25 @@ class ForestFireEnv(gym.Env):
         self,
         render_mode=None,
         grid_size=15,
-        p_spread=0.08,
-        max_steps=150,
+        p_spread=0.045,
+        max_steps=300,
         max_fuel=100.0,
         max_moisture=100.0,
         base_burn_rate=2.0,
         burn_acceleration=1.5,
         wind_speed=1.0,
-        wind_factor=0.05,  # Scaling factor for wind influence on spread
-        rain_intensity: float = 1.0,
-        rain_prob: float = 0.1,
-        max_water_drops: int = 12,
-        max_firebreak_capacity: int = 15,
-        max_budget: int = 150,
+        wind_factor=0.05,
+        rain_intensity=1.0,
+        rain_prob=0.1,
+        # Set base resources for a 15x15 grid for dynamic scaling
+        max_water_drops=12,
+        max_firebreak_capacity=15,
+        max_budget=150,
         action_costs=None,
-        water_drop_amount: float = 50.0,
-        truck_amount: float = 35.0,
-        invalid_action_penalty: float = 0.5,
-        line_half_length: int = 2,
-        dry_rate: float = 0.5,
+        water_drop_amount=50.0,
+        truck_amount=35.0,
+        invalid_action_penalty=0.5,
+        dry_rate=0.5,
         reward_weights=None,
         **kwargs
     ):
@@ -135,6 +135,15 @@ class ForestFireEnv(gym.Env):
         self.render_mode = render_mode
         self.p_spread = p_spread
         self.max_steps = max_steps
+        
+        # Dynamic Scaling based on Grid Area
+        area_ratio = (self.grid_size / 15.0) ** 2
+        self.max_water_drops = int(max_water_drops * area_ratio)
+        self.max_firebreak_capacity = int(max_firebreak_capacity * area_ratio)
+        self.max_budget = int(max_budget * area_ratio)
+        
+        # Dynamically scale the size of the tools so they remain useful on larger grids
+        self.line_half_length = max(2, self.grid_size // 6)
 
         # Continuous state parameters
         self.max_fuel = max_fuel
@@ -518,7 +527,6 @@ class ForestFireEnv(gym.Env):
         fires_extinguished = max(0, fires_before - active_fires)
 
         components = {
-            "extinction": 2.0 * (fires_extinguished / (self.grid_size ** 2)),
             "fire_damage": -w.fire_damage * fuel_burned / fuel_scale,
             "action_cost": -w.action_cost * budget_spent / budget_scale,
             "time": -w.time / time_scale if active_fires > 0 else 0.0,
@@ -592,15 +600,13 @@ class ForestFireEnv(gym.Env):
         budget_exhausted = self.budget_remaining == 0 and active_fires > 0
 
         # TODO: add failure termination when the burned area reaches the grid edge.
-        terminated = active_fires == 0 or healthy_trees == 0 or budget_exhausted
+        terminated = active_fires == 0 or healthy_trees == 0
         truncated = self.current_step >= self.max_steps
 
         self.failure_reason = None
         if terminated:
             if healthy_trees == 0:
                 self.failure_reason = "no_healthy"
-            elif budget_exhausted:
-                self.failure_reason = "budget_exhausted"
 
         reward, components, metrics = self._calculate_reward(
             fuel_before_action=fuel_before_action,

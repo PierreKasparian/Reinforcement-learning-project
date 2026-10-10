@@ -22,7 +22,7 @@ def main():
     os.makedirs("./plots", exist_ok=True)
     
     # Environment Setup
-    env = ForestFireEnv(grid_size=args.grid_size, max_steps=100)
+    env = ForestFireEnv(grid_size=args.grid_size)
     action_size = env.action_space.n 
     num_channels = 11  
     
