@@ -35,7 +35,6 @@ def main():
         agent = DQNAgent(action_size, args.grid_size, num_channels)
         
     # Training Loop
-    target_update_freq = 10
     save_freq = 300
     episode_rewards = []
     moving_averages = []
@@ -63,9 +62,6 @@ def main():
         # Standard Epsilon Decay for DQN/DDQN (Ignored completely by Rainbow)
         if hasattr(agent, 'epsilon'):
             agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)
-        
-        if episode % target_update_freq == 0:
-            agent.target_network.load_state_dict(agent.q_network.state_dict())
             
         # Logging
         episode_rewards.append(total_reward)
