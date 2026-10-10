@@ -125,6 +125,9 @@ class ForestFireEnv(gym.Env):
         action_costs=None,
         water_drop_amount: float = 50.0,
         truck_amount: float = 35.0,
+        budget_replenish_rate = 0.5,
+        water_drop_cooldown = 5,
+        cooldown_counter = 0,
         invalid_action_penalty: float = 0.5,
         line_half_length: int = 2,
         dry_rate: float = 0.5,
@@ -164,6 +167,11 @@ class ForestFireEnv(gym.Env):
         self.action_costs = dict(ACTION_COSTS if action_costs is None else action_costs)
         self.water_drop_amount = water_drop_amount
         self.truck_amount = truck_amount
+        self.budget_replenish_rate = budget_replenish_rate
+        self.water_drop_cooldown = water_drop_cooldown
+        self.cooldown_counter = cooldown_counter
+
+
         self.invalid_action_penalty = invalid_action_penalty
         self.line_half_length = line_half_length
         self.reward_weights = (
@@ -570,6 +578,17 @@ class ForestFireEnv(gym.Env):
         fuel_before_action = float(np.sum(self.fuel, dtype=np.float64))
         fires_before = int(np.sum(self.grid == CellState.BURNING))
 
+        self.budget_remaining = min(
+        self.max_budget, 
+        self.budget_remaining + self.budget_replenish_rate
+        )
+
+        if self.water_drops_remaining < self.max_water_drops:
+            self.cooldown_counter += 1
+            if self.cooldown_counter >= self.water_drop_cooldown:
+                self.water_drops_remaining += 1
+                self.cooldown_counter = 0
+
         if not self._is_action_valid(spec):
             self.action_valid = False
         else:
@@ -592,18 +611,15 @@ class ForestFireEnv(gym.Env):
 
         active_fires = np.sum(self.grid == CellState.BURNING)
         healthy_trees = np.sum(self.grid == CellState.HEALTHY)
-        budget_exhausted = self.budget_remaining == 0 and active_fires > 0
 
         # TODO: add failure termination when the burned area reaches the grid edge.
-        terminated = active_fires == 0 or healthy_trees == 0 or budget_exhausted
+        terminated = active_fires == 0 or healthy_trees == 0
         truncated = self.current_step >= self.max_steps
 
         self.failure_reason = None
         if terminated:
             if healthy_trees == 0:
                 self.failure_reason = "no_healthy"
-            elif budget_exhausted:
-                self.failure_reason = "budget_exhausted"
 
         reward, components, metrics = self._calculate_reward(
             fuel_before_action=fuel_before_action,
