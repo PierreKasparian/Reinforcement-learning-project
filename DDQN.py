@@ -11,8 +11,8 @@ class DDQNAgent(DQNAgent):
         
         # Override hyperparameters specifically for DDQN stability
         self.optimizer = torch.optim.Adam(self.q_network.parameters(), lr=5e-5)
-        self.epsilon_decay = 0.998  # Slower exploration decay
-        self.tau = 0.005            # Polyak soft update rate
+        self.epsilon_decay = 0.998
+        self.tau = 0.005
 
     def act(self, state, action_mask=None):
         state_tensor = torch.tensor(np.array(state), dtype=torch.float32).unsqueeze(0).to(device)

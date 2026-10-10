@@ -11,7 +11,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train RL agent on Wildfire Environment")
     parser.add_argument('--algo', type=str, default='ddqn', choices=['dqn', 'ddqn', 'rainbow'], 
                         help='Algorithm to train: dqn, ddqn, or rainbow')
-    parser.add_argument('--episodes', type=int, default=300)
+    parser.add_argument('--episodes', type=int, default=1000)
     parser.add_argument('--grid-size', type=int, default=15)
     return parser.parse_args()
 
@@ -22,7 +22,7 @@ def main():
     os.makedirs("./plots", exist_ok=True)
     
     # Environment Setup
-    env = ForestFireEnv(grid_size=args.grid_size, max_steps=100)
+    env = ForestFireEnv(grid_size=args.grid_size, max_steps=10000)
     action_size = env.action_space.n 
     num_channels = 11  
     
@@ -35,7 +35,7 @@ def main():
         agent = DQNAgent(action_size, args.grid_size, num_channels)
         
     # Training Loop
-    save_freq = 300
+    save_freq = 500
     episode_rewards = []
     moving_averages = []
     

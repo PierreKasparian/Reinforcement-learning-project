@@ -1,5 +1,6 @@
 import time
 import argparse
+import os
 import torch
 import pygame
 from forest_fire_env import ForestFireEnv
@@ -15,15 +16,24 @@ def parse_args():
                         help='Path to saved agent checkpoint (.pth file)')
     parser.add_argument('--grid-size', type=int, default=15,
                         help='Grid size matching the training run')
-    parser.add_argument('--delay', type=float, default=0.15,
+    parser.add_argument('--delay', type=float, default=0.3,
                         help='Delay in seconds per step for Pygame visual playback')
+    parser.add_argument('--save-frames', action='store_true',
+                        help='Whether to save simulation frames as images')
     return parser.parse_args()
 
 def main():
     args = parse_args()
 
+    frame_dir = "./sim_frames"
+    if args.save_frames:
+        os.makedirs(frame_dir, exist_ok=True)
+        for f in os.listdir(frame_dir):
+            if f.endswith(".png"):
+                os.remove(os.path.join(frame_dir, f))
+
     # Environment Setup
-    env = ForestFireEnv(render_mode="human", grid_size=args.grid_size, max_steps=150)
+    env = ForestFireEnv(render_mode="human", grid_size=args.grid_size, max_steps=10000)
     action_size = env.action_space.n
     num_channels = env.observation_space.shape[0]
 
@@ -68,6 +78,12 @@ def main():
         # Render visual frame using ForestFireRenderer
         env.render()
 
+        if args.save_frames:
+                    frame_path = os.path.join(frame_dir, f"frame_{step_count:04d}.png")
+                    current_screen = pygame.display.get_surface()
+                    if current_screen is not None:
+                        pygame.image.save(current_screen, frame_path)
+
         state = next_state
         total_reward += reward
 
@@ -83,6 +99,10 @@ def main():
     print(f"Total Steps: {step_count}")
     print(f"Total Reward: {total_reward:.2f}")
     print(f"Outcome: {outcome}")
+
+    if args.save_frames:
+        print(f"Frames saved to {frame_dir}/. You can compile them into a video using ffmpeg:")
+        print(f"ffmpeg -framerate 10 -i {frame_dir}/frame_%04d.png -c:v libx264 -pix_fmt yuv420p wildfire_sim.mp4")
 
     env.close()
 
