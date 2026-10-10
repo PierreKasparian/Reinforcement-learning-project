@@ -109,7 +109,7 @@ class ForestFireEnv(gym.Env):
         render_mode=None,
         grid_size=15,
         p_spread=0.08,
-        max_steps=150,
+        max_steps = None,
         max_fuel=100.0,
         max_moisture=100.0,
         base_burn_rate=2.0,
@@ -129,6 +129,7 @@ class ForestFireEnv(gym.Env):
         water_drop_cooldown = 5,
         cooldown_counter = 0,
         invalid_action_penalty: float = 0.5,
+        ineffective_action_penalty: float = 0.5,
         line_half_length: int = 2,
         dry_rate: float = 0.5,
         reward_weights=None,
@@ -173,6 +174,8 @@ class ForestFireEnv(gym.Env):
 
 
         self.invalid_action_penalty = invalid_action_penalty
+        self.ineffective_action_penalty = ineffective_action_penalty
+        self.is_action_effective = True
         self.line_half_length = line_half_length
         self.reward_weights = (
             reward_weights if reward_weights is not None else RewardWeights()
@@ -195,6 +198,11 @@ class ForestFireEnv(gym.Env):
         )
 
         self.action_space = spaces.Discrete(n_actions(self.grid_size))
+
+        if max_steps is None:
+            self.max_steps = grid_size * 20
+        else:
+            self.max_steps = max_steps
 
         self.renderer = None
         if self.render_mode is not None:
@@ -537,6 +545,10 @@ class ForestFireEnv(gym.Env):
                 -float(self.invalid_action_penalty)
                 if not self.action_valid else 0.0
             ),
+            "ineffective_action": (
+                -float(self.ineffective_action_penalty)
+                if self.action_valid and not self.is_action_effective else 0.0
+            ),
             "terminal": 0.0,
         }
 
@@ -602,6 +614,32 @@ class ForestFireEnv(gym.Env):
             elif spec.type == ActionType.FIRE_TRUCK:
                 self._apply_fire_truck(spec)
             self.budget_remaining -= self._action_cost(spec)
+
+        # Determine if the action was effective (targeted fire or near fire)
+        self.is_action_effective = True
+        if self.action_valid and spec.type in (ActionType.WATER_DROP, ActionType.FIREBREAK):
+            target_cells = line_cells(spec, self.grid_size, self.line_half_length)
+            
+            # Check if any cell in the target line is burning OR adjacent to a burning cell
+            near_fire = False
+            for r, c in target_cells:
+                if 0 <= r < self.grid_size and 0 <= c < self.grid_size:
+                    if self.grid[r, c] == CellState.BURNING:
+                        near_fire = True
+                        break
+                    # Check 4-neighbors for burning cells
+                    for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                        nr, nc = r + dr, c + dc
+                        if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
+                            if self.grid[nr, nc] == CellState.BURNING:
+                                near_fire = True
+                                break
+                    if near_fire:
+                        break
+            
+            # If the action missed all fire fronts, mark it as ineffective
+            if not near_fire:
+                self.is_action_effective = False
 
         self._apply_drying()
 
