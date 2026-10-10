@@ -676,7 +676,6 @@ class ForestFireEnv(gym.Env):
             fuel_before_action=fuel_before_action,
             fuel_before_spread=fuel_before_spread,
             budget_before=budget_before,
-            fires_before=fires_before,
             active_fires=active_fires,
             terminated=terminated,
             truncated=truncated,
