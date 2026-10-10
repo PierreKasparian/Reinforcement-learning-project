@@ -94,11 +94,11 @@ class Rain:
 class RewardWeights:
     """Configurable weights for the normalized reward components."""
 
-    fire_damage: float = 100.0
-    action_cost: float = 5.0
-    time: float = 1.0
+    fire_damage: float = 150.0
+    action_cost: float = 1.0
+    time: float = 0.5
     success: float = 100.0
-    failure: float = 100.0
+    failure: float = 50.0
 
 
 class ForestFireEnv(gym.Env):
@@ -118,6 +118,9 @@ class ForestFireEnv(gym.Env):
         wind_factor=0.05,
         rain_intensity=1.0,
         rain_prob=0.1,
+        budget_replenish_rate=0.5,
+        water_drop_cooldown=5,
+        cooldown_counter=0,
         # Set base resources for a 15x15 grid for dynamic scaling
         max_water_drops=12,
         max_firebreak_capacity=15,
@@ -134,7 +137,7 @@ class ForestFireEnv(gym.Env):
         self.grid_size = grid_size
         self.render_mode = render_mode
         self.p_spread = p_spread
-        self.max_steps = max_steps
+        self.max_steps = grid_size * 20
         
         # Dynamic Scaling based on Grid Area
         area_ratio = (self.grid_size / 15.0) ** 2
@@ -171,6 +174,9 @@ class ForestFireEnv(gym.Env):
         self.action_costs = dict(ACTION_COSTS if action_costs is None else action_costs)
         self.water_drop_amount = water_drop_amount
         self.truck_amount = truck_amount
+        self.budget_replenish_rate = budget_replenish_rate
+        self.water_drop_cooldown = water_drop_cooldown
+        self.cooldown_counter = cooldown_counter
         self.invalid_action_penalty = invalid_action_penalty
         self.reward_weights = (
             reward_weights if reward_weights is not None else RewardWeights()
@@ -244,8 +250,23 @@ class ForestFireEnv(gym.Env):
         self.failure_reason = None
 
         center = self.grid_size // 2
-        self.grid[center, center] = CellState.BURNING
-        self.burn_rate[center, center] = self.base_burn_rate
+        spawn_radius = max(1, self.grid_size // 6)
+        
+        # Randomly pick coordinates within the central bounding box
+        r = self.np_random.integers(center - spawn_radius, center + spawn_radius + 1)
+        c = self.np_random.integers(center - spawn_radius, center + spawn_radius + 1)
+        
+        self.grid[r, c] = CellState.BURNING
+        self.burn_rate[r, c] = self.base_burn_rate
+
+        min_burn_steps = 1
+        max_burn_steps = max(3, self.grid_size // 4)
+        initial_burn_steps = self.np_random.integers(min_burn_steps, max_burn_steps + 1)
+
+        for _ in range(initial_burn_steps):
+            self._update_environmental_factors()
+            self._apply_drying()
+            self._spread_fire()
 
         return self._get_obs(), self._get_info()
 
@@ -573,6 +594,17 @@ class ForestFireEnv(gym.Env):
         budget_before = self.budget_remaining
         fuel_before_action = float(np.sum(self.fuel, dtype=np.float64))
         fires_before = int(np.sum(self.grid == CellState.BURNING))
+
+        self.budget_remaining = min(
+        self.max_budget, 
+        self.budget_remaining + self.budget_replenish_rate
+        )
+
+        if self.water_drops_remaining < self.max_water_drops:
+            self.cooldown_counter += 1
+            if self.cooldown_counter >= self.water_drop_cooldown:
+                self.water_drops_remaining += 1
+                self.cooldown_counter = 0
 
         if not self._is_action_valid(spec):
             self.action_valid = False

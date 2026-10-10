@@ -21,7 +21,7 @@ class DQNAgent:
         self.gamma = 0.99
         self.epsilon = 1.0
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.995
+        self.epsilon_decay = 0.998
         
     def act(self, state, action_mask=None):
         if random.random() < self.epsilon:
