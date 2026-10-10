@@ -164,9 +164,9 @@ class ForestFireEnv(gym.Env):
         # Suppression resources
         area_scale = (self.grid_size / 15.0) ** 2
         
-        self.max_water_drops = max_water_drops if max_water_drops is not None else int(max_water_drops * area_scale)
-        self.max_firebreak_capacity = max_firebreak_capacity if max_firebreak_capacity is not None else int(max_firebreak_capacity * area_scale)
-        self.max_budget = max_budget if max_budget is not None else int(max_budget * area_scale)
+        self.max_water_drops = max_water_drops if max_water_drops is not None else int(12 * area_scale)
+        self.max_firebreak_capacity = max_firebreak_capacity if max_firebreak_capacity is not None else int(15 * area_scale)
+        self.max_budget = max_budget if max_budget is not None else int(150 * area_scale)
         self.action_costs = dict(ACTION_COSTS if action_costs is None else action_costs)
         self.water_drop_amount = water_drop_amount
         self.truck_amount = truck_amount
