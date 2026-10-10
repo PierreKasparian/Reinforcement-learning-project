@@ -172,7 +172,6 @@ class ForestFireEnv(gym.Env):
         self.water_drop_amount = water_drop_amount
         self.truck_amount = truck_amount
         self.invalid_action_penalty = invalid_action_penalty
-        self.line_half_length = line_half_length
         self.reward_weights = (
             reward_weights if reward_weights is not None else RewardWeights()
         )
