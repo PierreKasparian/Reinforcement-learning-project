@@ -21,7 +21,8 @@ class DDQNAgent(DQNAgent):
             max_next_q_values = self.target_network(next_states).gather(1, best_next_actions)
             target_q_values = rewards + (self.gamma * max_next_q_values * (1 - dones))
             
-        loss = nn.MSELoss()(q_values, target_q_values)
+        loss = nn.SmoothL1Loss()(q_values, target_q_values)
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=10.0)
         self.optimizer.step()
