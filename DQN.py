@@ -14,7 +14,7 @@ class DQNAgent:
         self.target_network = WildfireCNNQNetwork(action_size, grid_size, num_channels).to(device)
         self.target_network.load_state_dict(self.q_network.state_dict())
         
-        self.optimizer = optim.Adam(self.q_network.parameters(), lr=1e-3)
+        self.optimizer = optim.Adam(self.q_network.parameters(), lr=2.5e-4)
         self.memory = ReplayBuffer(100000)
         
         self.batch_size = 64
@@ -59,9 +59,10 @@ class DQNAgent:
             max_next_q_values = next_q_values.max(1)[0].unsqueeze(1)
             target_q_values = rewards + (self.gamma * max_next_q_values * (1 - dones))
             
-        loss = nn.MSELoss()(q_values, target_q_values)
+        loss = nn.SmoothL1Loss()(q_values, target_q_values)
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=10.0)
         self.optimizer.step()
 
     def save_checkpoint(self, filepath):

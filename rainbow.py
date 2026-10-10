@@ -52,7 +52,7 @@ class RainbowAgent:
             return
             
         self.q_network.reset_noise()
-        self.target_network.reset_noise()
+        #self.target_network.reset_noise()
         
         # Sample with PER
         states, actions, rewards, next_states, dones, next_masks, idxs, weights = self.memory.sample(self.batch_size, self.beta)
@@ -79,6 +79,14 @@ class RainbowAgent:
             b = (T_z - self.v_min) / self.delta_z
             l = b.floor().long()
             u = b.ceil().long()
+
+            weight_l = u.float() - b
+            weight_u = b - l.float()
+
+            # If b is exactly an integer, u == l. Force the mass into weight_l
+            same_mask = (l == u)
+            weight_l[same_mask] = 1.0
+            weight_u[same_mask] = 0.0
             
             # Distribute probabilities
             offset = torch.linspace(0, (self.batch_size - 1) * self.num_atoms, self.batch_size).long().unsqueeze(1).to(device)

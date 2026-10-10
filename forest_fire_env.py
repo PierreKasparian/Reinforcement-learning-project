@@ -116,22 +116,18 @@ class ForestFireEnv(gym.Env):
         burn_growth_rate=0.35,
         max_burn_rate=30.0,
         wind_speed=1.0,
-        wind_factor=0.05,  # Scaling factor for wind influence on spread
-        rain_intensity: float = 1.0,
-        rain_prob: float = 0.1,
-        max_water_drops = None,
-        max_firebreak_capacity = None,
-        max_budget = None,
+        wind_factor=0.05,
+        rain_intensity=1.0,
+        rain_prob=0.1,
+        # Set base resources for a 15x15 grid for dynamic scaling
+        max_water_drops=12,
+        max_firebreak_capacity=15,
+        max_budget=150,
         action_costs=None,
-        water_drop_amount: float = 50.0,
-        truck_amount: float = 35.0,
-        budget_replenish_rate = 0.5,
-        water_drop_cooldown = 5,
-        cooldown_counter = 0,
-        invalid_action_penalty: float = 0.5,
-        ineffective_action_penalty: float = 0.5,
-        line_half_length: int = 2,
-        dry_rate: float = 0.5,
+        water_drop_amount=50.0,
+        truck_amount=35.0,
+        invalid_action_penalty=0.5,
+        dry_rate=0.5,
         reward_weights=None,
         **kwargs
     ):
@@ -140,6 +136,15 @@ class ForestFireEnv(gym.Env):
         self.render_mode = render_mode
         self.p_spread = p_spread
         self.max_steps = max_steps
+        
+        # Dynamic Scaling based on Grid Area
+        area_ratio = (self.grid_size / 15.0) ** 2
+        self.max_water_drops = int(max_water_drops * area_ratio)
+        self.max_firebreak_capacity = int(max_firebreak_capacity * area_ratio)
+        self.max_budget = int(max_budget * area_ratio)
+        
+        # Dynamically scale the size of the tools so they remain useful on larger grids
+        self.line_half_length = max(2, self.grid_size // 6)
 
         # Continuous state parameters
         self.max_fuel = max_fuel
@@ -178,7 +183,6 @@ class ForestFireEnv(gym.Env):
         self.invalid_action_penalty = invalid_action_penalty
         self.ineffective_action_penalty = ineffective_action_penalty
         self.is_action_effective = True
-        self.line_half_length = line_half_length
         self.reward_weights = (
             reward_weights if reward_weights is not None else RewardWeights()
         )
