@@ -9,10 +9,10 @@ from forest_fire_env import ForestFireEnv
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train RL agent on Wildfire Environment")
-    parser.add_argument('--algo', type=str, default='rainbow', choices=['dqn', 'ddqn', 'rainbow'], 
+    parser.add_argument('--algo', type=str, default='ddqn', choices=['dqn', 'ddqn', 'rainbow'], 
                         help='Algorithm to train: dqn, ddqn, or rainbow')
-    parser.add_argument('--episodes', type=int, default=10000)
-    parser.add_argument('--grid-size', type=int, default=30)
+    parser.add_argument('--episodes', type=int, default=300)
+    parser.add_argument('--grid-size', type=int, default=15)
     return parser.parse_args()
 
 def main():
@@ -36,7 +36,7 @@ def main():
         
     # Training Loop
     target_update_freq = 10
-    save_freq = 500
+    save_freq = 300
     episode_rewards = []
     moving_averages = []
     

@@ -113,7 +113,8 @@ class ForestFireEnv(gym.Env):
         max_fuel=100.0,
         max_moisture=100.0,
         base_burn_rate=2.0,
-        burn_acceleration=1.5,
+        burn_growth_rate=0.35,
+        max_burn_rate=30.0,
         wind_speed=1.0,
         wind_factor=0.05,  # Scaling factor for wind influence on spread
         rain_intensity: float = 1.0,
@@ -140,7 +141,8 @@ class ForestFireEnv(gym.Env):
         self.max_fuel = max_fuel
         self.max_moisture = max_moisture
         self.base_burn_rate = base_burn_rate
-        self.burn_acceleration = burn_acceleration
+        self.burn_growth_rate = burn_growth_rate
+        self.max_burn_rate = max_burn_rate
 
         # Wind dynamics
         self.wind_factor = wind_factor
@@ -465,7 +467,9 @@ class ForestFireEnv(gym.Env):
                         if self.grid[nr, nc] == CellState.HEALTHY:
                             new_fires.add((nr, nc))
             else:
-                self.burn_rate[r, c] += self.burn_acceleration
+                curr_rate = self.burn_rate[r, c]
+                logistic_delta = self.burn_growth_rate * curr_rate * (1.0 - (curr_rate / self.max_burn_rate))
+                self.burn_rate[r, c] = min(self.max_burn_rate, curr_rate + logistic_delta)
 
                 # Probabilistic spread with wind and moisture factors
                 for nr, nc in neighbors:
