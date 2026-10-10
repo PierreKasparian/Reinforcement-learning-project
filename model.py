@@ -67,7 +67,6 @@ class WildfireCNNQNetwork(nn.Module):
 
 
 class NoisyLinear(nn.Module):
-    # (Unchanged from your original code)
     def __init__(self, in_features, out_features, std_init=0.5):
         super(NoisyLinear, self).__init__()
         self.in_features = in_features
