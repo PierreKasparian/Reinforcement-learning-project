@@ -6,29 +6,32 @@ import torch.nn.functional as F
 class WildfireCNNQNetwork(nn.Module):
     def __init__(self, action_size, grid_size=15, num_channels=11):
         super().__init__()
-        self.grid_size = grid_size
-        self.num_channels = num_channels
         
-        # Spatial Stream (CNN)
-        self.conv1 = nn.Conv2d(num_channels, 32, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        # Convolutional Feature Extractor
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(num_channels, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+        )
         
-        # Calculate flattened size: 64 channels * grid_size * grid_size
-        self.flat_size = 64 * grid_size * grid_size
+        self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
         
-        # Fully Connected Value Head
-        self.fc1 = nn.Linear(self.flat_size, 512)
-        self.fc2 = nn.Linear(512, action_size)
+        # Fixed 64-feature fully connected hidden layer
+        self.fc1 = nn.Linear(64, 128)
+        self.relu = nn.ReLU()
+        
+        self.fc_out = nn.Linear(128, action_size)
 
     def forward(self, x):
-        # x is expected to be shape: (Batch, Channels, Height, Width)
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
+        x = self.conv_layers(x)
+        x = self.global_pool(x)
+        x = x.view(x.size(0), -1)
         
-        x = x.view(x.size(0), -1)  
-        
-        x = F.relu(self.fc1(x))
-        return self.fc2(x)
+        x = self.relu(self.fc1(x))
+        return self.fc_out(x)
 
 
 # Rainbow DQN components

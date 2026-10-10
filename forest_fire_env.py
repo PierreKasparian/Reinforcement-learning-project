@@ -119,9 +119,9 @@ class ForestFireEnv(gym.Env):
         wind_factor=0.05,  # Scaling factor for wind influence on spread
         rain_intensity: float = 1.0,
         rain_prob: float = 0.1,
-        max_water_drops: int = 12,
-        max_firebreak_capacity: int = 15,
-        max_budget: int = 150,
+        max_water_drops = None,
+        max_firebreak_capacity = None,
+        max_budget = None,
         action_costs=None,
         water_drop_amount: float = 50.0,
         truck_amount: float = 35.0,
@@ -162,9 +162,11 @@ class ForestFireEnv(gym.Env):
         self._watered_this_step = np.zeros((self.grid_size, self.grid_size), dtype=bool)
 
         # Suppression resources
-        self.max_water_drops = max_water_drops
-        self.max_firebreak_capacity = max_firebreak_capacity
-        self.max_budget = max_budget
+        area_scale = (self.grid_size / 15.0) ** 2
+        
+        self.max_water_drops = max_water_drops if max_water_drops is not None else int(max_water_drops * area_scale)
+        self.max_firebreak_capacity = max_firebreak_capacity if max_firebreak_capacity is not None else int(max_firebreak_capacity * area_scale)
+        self.max_budget = max_budget if max_budget is not None else int(max_budget * area_scale)
         self.action_costs = dict(ACTION_COSTS if action_costs is None else action_costs)
         self.water_drop_amount = water_drop_amount
         self.truck_amount = truck_amount
@@ -254,8 +256,23 @@ class ForestFireEnv(gym.Env):
         self.failure_reason = None
 
         center = self.grid_size // 2
-        self.grid[center, center] = CellState.BURNING
-        self.burn_rate[center, center] = self.base_burn_rate
+        spawn_radius = max(1, self.grid_size // 6)
+        
+        # Randomly pick coordinates within the central bounding box
+        r = self.np_random.integers(center - spawn_radius, center + spawn_radius + 1)
+        c = self.np_random.integers(center - spawn_radius, center + spawn_radius + 1)
+        
+        self.grid[r, c] = CellState.BURNING
+        self.burn_rate[r, c] = self.base_burn_rate
+
+        min_burn_steps = 1
+        max_burn_steps = max(3, self.grid_size // 4)
+        initial_burn_steps = self.np_random.integers(min_burn_steps, max_burn_steps + 1)
+
+        for _ in range(initial_burn_steps):
+            self._update_environmental_factors()
+            self._apply_drying()
+            self._spread_fire()
 
         return self._get_obs(), self._get_info()
 
