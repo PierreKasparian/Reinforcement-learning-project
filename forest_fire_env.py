@@ -121,6 +121,9 @@ class ForestFireEnv(gym.Env):
         budget_replenish_rate=0.5,
         water_drop_cooldown=5,
         cooldown_counter=0,
+        aircraft_turnaround_steps=4,
+        num_fire_trucks=2,
+        truck_turnaround_steps=3,
         # Set base resources for a 15x15 grid for dynamic scaling
         max_water_drops=12,
         max_firebreak_capacity=15,
@@ -177,6 +180,14 @@ class ForestFireEnv(gym.Env):
         self.budget_replenish_rate = budget_replenish_rate
         self.water_drop_cooldown = water_drop_cooldown
         self.cooldown_counter = cooldown_counter
+
+        # Vehicle turnaround: after a dispatch, a vehicle is busy (flying back to
+        # refill / driving back) and becomes available again N steps later.
+        self.aircraft_turnaround_steps = max(1, int(aircraft_turnaround_steps))
+        self.num_fire_trucks = max(1, int(num_fire_trucks))
+        self.truck_turnaround_steps = max(1, int(truck_turnaround_steps))
+        self.aircraft_cooldown = 0
+        self.truck_timers = np.zeros(self.num_fire_trucks, dtype=np.int32)
         self.invalid_action_penalty = invalid_action_penalty
         self.reward_weights = (
             reward_weights if reward_weights is not None else RewardWeights()
@@ -241,8 +252,10 @@ class ForestFireEnv(gym.Env):
         # Suppression resources
         self.water_drops_remaining = self.max_water_drops
         self.firebreak_capacity = self.max_firebreak_capacity
-        self.aircraft_available = True # no restrictions implemented for the moment
-        self.fire_truck_available = True
+        self.cooldown_counter = 0
+        self.aircraft_cooldown = 0
+        self.truck_timers = np.zeros(self.num_fire_trucks, dtype=np.int32)
+        self._sync_vehicle_availability()
         self.budget_remaining = self.max_budget
 
         self.last_action = ActionSpec(ActionType.NOOP)
@@ -347,6 +360,30 @@ class ForestFireEnv(gym.Env):
         # Wind
         self.wind.step(self.np_random, transition_prob=0.15)
 
+    # ------- Vehicles -------
+
+    def _sync_vehicle_availability(self):
+        """Derive the availability flags from the turnaround timers."""
+        self.aircraft_available = self.aircraft_cooldown == 0
+        self.fire_truck_available = bool(np.any(self.truck_timers == 0))
+
+    def _dispatch_aircraft(self):
+        """The aircraft leaves to refill and returns after its turnaround time."""
+        self.aircraft_cooldown = self.aircraft_turnaround_steps
+        self._sync_vehicle_availability()
+
+    def _dispatch_fire_truck(self):
+        """Send the first idle truck; it returns after its turnaround time."""
+        idle = np.flatnonzero(self.truck_timers == 0)
+        self.truck_timers[idle[0]] = self.truck_turnaround_steps
+        self._sync_vehicle_availability()
+
+    def _tick_vehicle_timers(self):
+        """Advance turnaround timers by one step (called at the end of step())."""
+        self.aircraft_cooldown = max(0, self.aircraft_cooldown - 1)
+        self.truck_timers = np.maximum(0, self.truck_timers - 1)
+        self._sync_vehicle_availability()
+
     # ------- Actions -------
 
     def _action_cost(self, spec: ActionSpec) -> int:
@@ -429,8 +466,10 @@ class ForestFireEnv(gym.Env):
         # Channels 6-10: resource levels, broadcast over the grid
         obs[6] = self.water_drops_remaining / self.max_water_drops
         obs[7] = self.firebreak_capacity / self.max_firebreak_capacity
-        obs[8] = float(self.aircraft_available)
-        obs[9] = float(self.fire_truck_available)
+        # 1.0 = ready; lower values = aircraft still returning (fraction of turnaround left)
+        obs[8] = 1.0 - self.aircraft_cooldown / self.aircraft_turnaround_steps
+        # Fraction of the truck fleet that is idle
+        obs[9] = float(np.mean(self.truck_timers == 0))
         obs[10] = self.budget_remaining / self.max_budget
 
         return obs
@@ -453,6 +492,9 @@ class ForestFireEnv(gym.Env):
                 "firebreak_capacity": self.firebreak_capacity,
                 "aircraft_available": self.aircraft_available,
                 "fire_truck_available": self.fire_truck_available,
+                "aircraft_cooldown": int(self.aircraft_cooldown),
+                "trucks_idle": int(np.sum(self.truck_timers == 0)),
+                "num_fire_trucks": self.num_fire_trucks,
                 "budget_remaining": self.budget_remaining,
             },
             "action_valid": self.action_valid,
@@ -613,11 +655,13 @@ class ForestFireEnv(gym.Env):
             if spec.type == ActionType.WATER_DROP:
                 self._apply_water_drop(spec)
                 self.water_drops_remaining -= 1
+                self._dispatch_aircraft()
             elif spec.type == ActionType.FIREBREAK:
                 self._apply_firebreak(spec)
                 self.firebreak_capacity -= 1
             elif spec.type == ActionType.FIRE_TRUCK:
                 self._apply_fire_truck(spec)
+                self._dispatch_fire_truck()
             self.budget_remaining -= self._action_cost(spec)
 
         self._apply_drying()
@@ -638,6 +682,10 @@ class ForestFireEnv(gym.Env):
         if terminated:
             if healthy_trees == 0:
                 self.failure_reason = "no_healthy"
+
+        # Advance vehicle timers last so the returned observation and the next
+        # action_masks() describe exactly the state of the next decision.
+        self._tick_vehicle_timers()
 
         reward, components, metrics = self._calculate_reward(
             fuel_before_action=fuel_before_action,
