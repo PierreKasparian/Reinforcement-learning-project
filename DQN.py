@@ -7,11 +7,11 @@ from buffer import ReplayBuffer, device
 from model import WildfireCNNQNetwork
 
 class DQNAgent:
-    def __init__(self, action_size, grid_size=15, num_channels=11):
+    def __init__(self, action_size, grid_size=15, num_spatial=5, num_global=6):
         self.action_size = action_size
         
-        self.q_network = WildfireCNNQNetwork(action_size, grid_size, num_channels).to(device)
-        self.target_network = WildfireCNNQNetwork(action_size, grid_size, num_channels).to(device)
+        self.q_network = WildfireCNNQNetwork(action_size, grid_size, num_spatial, num_global).to(device)
+        self.target_network = WildfireCNNQNetwork(action_size, grid_size, num_spatial, num_global).to(device)
         self.target_network.load_state_dict(self.q_network.state_dict())
         
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=2.5e-4)
@@ -21,7 +21,7 @@ class DQNAgent:
         self.gamma = 0.99
         self.epsilon = 1.0
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.998
+        self.epsilon_decay = 0.9995
         
     def act(self, state, action_mask=None):
         if random.random() < self.epsilon:
@@ -31,11 +31,12 @@ class DQNAgent:
                     return int(random.choice(valid_actions))
             return random.randint(0, self.action_size - 1)
         
-        state_tensor = torch.tensor(np.array(state), dtype=torch.float32).unsqueeze(0).to(device)
+        sp_tensor = torch.tensor(np.array(state["spatial"]), dtype=torch.float32).unsqueeze(0).to(device)
+        gl_tensor = torch.tensor(np.array(state["global"]), dtype=torch.float32).unsqueeze(0).to(device)
+        
         with torch.no_grad():
-            q_values = self.q_network(state_tensor)
+            q_values = self.q_network(sp_tensor, gl_tensor)
             
-            # Mask invalid actions so they are never selected
             if action_mask is not None:
                 mask_tensor = torch.tensor(action_mask, dtype=torch.bool).to(device)
                 q_values[0, ~mask_tensor] = -float('inf')
@@ -47,13 +48,13 @@ class DQNAgent:
             return
             
         states, actions, rewards, next_states, dones, next_masks = self.memory.sample(self.batch_size)
+        sp_states, gl_states = states
+        next_sp_states, next_gl_states = next_states
         
-        q_values = self.q_network(states).gather(1, actions)
+        q_values = self.q_network(sp_states, gl_states).gather(1, actions)
         
         with torch.no_grad():
-            next_q_values = self.target_network(next_states)
-            
-            # Prevent the target network from evaluating invalid future actions
+            next_q_values = self.target_network(next_sp_states, next_gl_states)
             next_q_values[~next_masks] = -float('inf')
             
             max_next_q_values = next_q_values.max(1)[0].unsqueeze(1)

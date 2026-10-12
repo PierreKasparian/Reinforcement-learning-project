@@ -12,7 +12,7 @@ def parse_args():
     parser.add_argument('--algo', type=str, default='rainbow', choices=['dqn', 'ddqn', 'rainbow'], 
                         help='Algorithm to train: dqn, ddqn, or rainbow')
     parser.add_argument('--episodes', type=int, default=10000)
-    parser.add_argument('--grid-size', type=int, default=30)
+    parser.add_argument('--grid-size', type=int, default=15) # Default match to Env
     return parser.parse_args()
 
 def main():
@@ -21,20 +21,20 @@ def main():
     os.makedirs("./checkpoints", exist_ok=True)
     os.makedirs("./plots", exist_ok=True)
     
-    # Environment Setup
     env = ForestFireEnv(grid_size=args.grid_size)
     action_size = env.action_space.n 
-    num_channels = 11  
     
-    # Initialize Selected Agent
+    # Dict sizes mapped straight from observation space definition
+    num_spatial = 5 
+    num_global = 6  
+    
     if args.algo == 'rainbow':
-        agent = RainbowAgent(action_size, args.grid_size, num_channels)
+        agent = RainbowAgent(action_size, args.grid_size, num_spatial, num_global)
     elif args.algo == 'ddqn':
-        agent = DDQNAgent(action_size, args.grid_size, num_channels)
+        agent = DDQNAgent(action_size, args.grid_size, num_spatial, num_global)
     else:
-        agent = DQNAgent(action_size, args.grid_size, num_channels)
+        agent = DQNAgent(action_size, args.grid_size, num_spatial, num_global)
         
-    # Training Loop
     target_update_freq = 10
     save_freq = 500
     episode_rewards = []
@@ -60,14 +60,12 @@ def main():
             state = next_state
             total_reward += reward
             
-        # Standard Epsilon Decay for DQN/DDQN (Ignored completely by Rainbow)
         if hasattr(agent, 'epsilon'):
             agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)
         
         if episode % target_update_freq == 0:
             agent.target_network.load_state_dict(agent.q_network.state_dict())
             
-        # Logging
         episode_rewards.append(total_reward)
         moving_avg = np.mean(episode_rewards[-100:]) if len(episode_rewards) >= 100 else np.mean(episode_rewards)
         moving_averages.append(moving_avg)
@@ -77,13 +75,11 @@ def main():
             eps_str = f" | Epsilon: {agent.epsilon:.3f}" if hasattr(agent, 'epsilon') else ""
             print(f"Episode: {episode + 1:4d} | Reward: {total_reward:7.2f} | 100-ep Avg: {moving_avg:7.2f}{eps_str} | Outcome: {outcome}")
             
-        # Checkpointing
         if (episode + 1) % save_freq == 0:
             agent.save_checkpoint(f"./checkpoints/{args.algo}_wildfire_ep{episode + 1}.pth")
             
     env.close()
     
-    # 4. Visualization
     plt.figure(figsize=(10, 5))
     plt.plot(episode_rewards, label='Episode Reward', alpha=0.4, color='royalblue')
     plt.plot(moving_averages, label='100-Episode Moving Avg', linewidth=2, color='darkorange')
