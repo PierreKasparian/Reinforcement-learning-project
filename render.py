@@ -135,8 +135,8 @@ class ForestFireRenderer:
                     f"BUDGET: {resources['budget_remaining']}  |  "
                     f"DROPS: {resources['water_drops_remaining']}  |  "
                     f"FIREBREAK: {resources['firebreak_capacity']}  |  "
-                    f"AIRCRAFT: {'YES' if resources['aircraft_available'] else 'NO'}  |  "
-                    f"TRUCK: {'YES' if resources['fire_truck_available'] else 'NO'}"
+                    f"AIRCRAFT: {'YES' if resources['aircraft_available'] else str(resources.get('aircraft_cooldown', 0)) + ' steps'}  |  "
+                    f"TRUCKS: {resources.get('trucks_idle', int(resources['fire_truck_available']))}/{resources.get('num_fire_trucks', 1)}"
                 )
                 resources_y = padding_rect.bottom + 6
                 resources_surface = self.font.render(resources_text, True, (0, 0, 0), hud_bg_color)
