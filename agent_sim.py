@@ -12,8 +12,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate Trained RL Agent on Wildfire Environment")
     parser.add_argument('--algo', type=str, default='rainbow', choices=['dqn', 'ddqn', 'rainbow'],
                         help='Algorithm of saved checkpoint')
-    # Updated default to match your 2000-episode run
-    parser.add_argument('--checkpoint', type=str, default='./checkpoints/rainbow_wildfire_ep2000.pth',
+    parser.add_argument('--checkpoint', type=str, default='./checkpoints/rainbow_wildfire_ep10000.pth',
                         help='Path to saved agent checkpoint (.pth file)')
     # Updated default to 15 to match the new training script
     parser.add_argument('--grid-size', type=int, default=15,
