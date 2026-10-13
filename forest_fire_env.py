@@ -16,6 +16,10 @@ from actions import (
     n_actions,
 )
 
+NEIGHBOR_OFFSETS = [
+    (-1, 0), (1, 0), (0, -1), (0, 1),
+    (-1, -1), (-1, 1), (1, -1), (1, 1)
+]
 
 class CellState(enum.IntEnum):
     BURNT = 0
@@ -398,20 +402,35 @@ class ForestFireEnv(gym.Env):
         return DIRECTION_OFFSETS[self.wind.direction]
 
     def _calculate_wind_modifier(self, source_r: int, source_c: int, target_r: int, target_c: int) -> float:
-        """Calculates spread multiplier using localized, smoothly varying wind vectors."""
+        """Calculates spread multiplier using localized, smoothly varying wind vectors, adjusted for distance."""
         spread_dr = target_r - source_r
         spread_dc = target_c - source_c
+        
+        dist = np.hypot(spread_dr, spread_dc)
+        if dist == 0:
+            return 1.0
+
+        # Normalize spread direction vector
+        norm_dr = spread_dr / dist
+        norm_dc = spread_dc / dist
 
         # Get localized wind vector at the source burning cell
         wind_dx, wind_dy = self.wind.get_vector_at(source_r, source_c)
+        wind_mag = np.hypot(wind_dx, wind_dy)
         
-        if wind_dx == 0.0 and wind_dy == 0.0:
+        if wind_mag == 0.0:
             return 1.0
 
-        # Alignment between spread direction and localized wind vector
-        alignment = (spread_dr * wind_dx) + (spread_dc * wind_dy)
+        # Normalize wind direction vector
+        wind_dir_dx = wind_dx / wind_mag
+        wind_dir_dy = wind_dy / wind_mag
 
-        modifier = 1.0 + (alignment * self.wind_factor)
+        alignment = (norm_dr * wind_dir_dx) + (norm_dc * wind_dir_dy)
+
+        # Scale modifier by distance
+        distance_penalty = 1.0 / dist
+        
+        modifier = 1.0 + (alignment * self.wind.speed * self.wind_factor * distance_penalty)
         return max(0.00, modifier)
 
     def add_moisture(self, r, c, amount):
@@ -653,15 +672,15 @@ class ForestFireEnv(gym.Env):
             # Intensity ratio at burnout point (normalized 0 to 1)
             intensity_ratio = self.burn_rate[r, c] / self.max_burn_rate
             
-            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            for dr, dc in NEIGHBOR_OFFSETS:
                 nr, nc = r + dr, c + dc
                 if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
                     if self.grid[nr, nc] == CellState.HEALTHY:
                         moisture_factor = 1.0 - (self.moisture[nr, nc] / self.max_moisture)
                         wind_mod = self._calculate_wind_modifier(r, c, nr, nc)
                         
-                        # Max intensity has probability 1 * moisture_factor * wind_mod (adjusted by intensity ratio)
-                        effective_p = intensity_ratio * moisture_factor * wind_mod
+                        dist = np.hypot(dr, dc)
+                        effective_p = (intensity_ratio * moisture_factor * wind_mod) * (1.0 / dist)
                         
                         if self.np_random.random() < min(1.0, effective_p):
                             new_fires.add((nr, nc))
@@ -669,19 +688,16 @@ class ForestFireEnv(gym.Env):
         # Probabilistic spread from currently active fires
         active_coords = np.argwhere(still_burning_mask & ~burnout_mask)
         for r, c in active_coords:
-            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            for dr, dc in NEIGHBOR_OFFSETS:
                 nr, nc = r + dr, c + dc
                 if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
                     if self.grid[nr, nc] == CellState.HEALTHY:
                         moisture_factor = 1.0 - (self.moisture[nr, nc] / self.max_moisture)
                         wind_mod = self._calculate_wind_modifier(r, c, nr, nc)
 
-                        effective_p = (
-                            self.p_spread
-                            * (1.0 + 0.05 * self.burn_rate[r, c])
-                            * moisture_factor
-                            * wind_mod
-                        )
+                        dist = np.hypot(dr, dc)
+                        base_probability = self.p_spread * (1.0 + 0.05 * self.burn_rate[r, c]) * moisture_factor * wind_mod
+                        effective_p = base_probability * (1.0 / dist)
 
                         if self.np_random.random() < min(1.0, effective_p):
                             new_fires.add((nr, nc))
