@@ -263,7 +263,7 @@ class ForestFireEnv(gym.Env):
         self.max_budget = int(max_budget * area_ratio)
         
         # Dynamically scale the size of the tools so they remain useful on larger grids
-        self.line_half_length = max(2, self.grid_size // 6)
+        self.line_half_length = max(1, self.grid_size // 12)
 
         # Continuous state parameters
         self.max_fuel = max_fuel
