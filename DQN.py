@@ -13,8 +13,8 @@ class DQNAgent:
         self.q_network = WildfireCNNQNetwork(action_size, grid_size, num_spatial, num_global).to(device)
         self.target_network = WildfireCNNQNetwork(action_size, grid_size, num_spatial, num_global).to(device)
         self.target_network.load_state_dict(self.q_network.state_dict())
-        
-        self.optimizer = optim.Adam(self.q_network.parameters(), lr=2.5e-4)
+        self.target_network.eval() # Ensure target network is always in eval mode
+        self.optimizer = optim.Adam(self.q_network.parameters(), lr=1e-4)
         self.memory = ReplayBuffer(100000)
         
         self.batch_size = 64
@@ -34,13 +34,15 @@ class DQNAgent:
         sp_tensor = torch.tensor(np.array(state["spatial"]), dtype=torch.float32).unsqueeze(0).to(device)
         gl_tensor = torch.tensor(np.array(state["global"]), dtype=torch.float32).unsqueeze(0).to(device)
         
+        self.q_network.eval()
         with torch.no_grad():
             q_values = self.q_network(sp_tensor, gl_tensor)
             
             if action_mask is not None:
                 mask_tensor = torch.tensor(action_mask, dtype=torch.bool).to(device)
-                q_values[0, ~mask_tensor] = -float('inf')
+                q_values[0, ~mask_tensor] = -1e8
                 
+        self.q_network.train()
         return torch.argmax(q_values).item()
         
     def learn(self):
@@ -55,12 +57,13 @@ class DQNAgent:
         
         with torch.no_grad():
             next_q_values = self.target_network(next_sp_states, next_gl_states)
-            next_q_values[~next_masks] = -float('inf')
+            next_q_values[~next_masks] = -1e8
             
             max_next_q_values = next_q_values.max(1)[0].unsqueeze(1)
             target_q_values = rewards + (self.gamma * max_next_q_values * (1 - dones))
             
         loss = nn.SmoothL1Loss()(q_values, target_q_values)
+        
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=10.0)

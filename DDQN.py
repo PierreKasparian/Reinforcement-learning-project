@@ -14,14 +14,18 @@ class DDQNAgent(DQNAgent):
         q_values = self.q_network(sp_states, gl_states).gather(1, actions)
         
         with torch.no_grad():
+            # Action selection using the online network
             next_q_values_online = self.q_network(next_sp_states, next_gl_states)
-            next_q_values_online[~next_masks] = -float('inf') 
+            next_q_values_online[~next_masks] = -1e8 
+            
             best_next_actions = next_q_values_online.argmax(dim=1).unsqueeze(1)
             
+            # Action evaluation using the target network
             max_next_q_values = self.target_network(next_sp_states, next_gl_states).gather(1, best_next_actions)
             target_q_values = rewards + (self.gamma * max_next_q_values * (1 - dones))
             
         loss = nn.SmoothL1Loss()(q_values, target_q_values)
+        
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=10.0)
