@@ -201,7 +201,7 @@ class Rain:
 
     def get_moisture_increase(self, r: int, c: int, grid_shape: tuple) -> float:
         """Returns localized moisture added to cell (r, c) this step."""
-        return float(self.intensity_field[r, c])
+        return float(self.intensity_field[r, c] // 2)
 
 
 @dataclass(frozen=True)
