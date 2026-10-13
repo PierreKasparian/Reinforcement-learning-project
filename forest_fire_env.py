@@ -113,7 +113,8 @@ class ForestFireEnv(gym.Env):
         max_fuel=100.0,
         max_moisture=100.0,
         base_burn_rate=2.0,
-        burn_acceleration=1.5,
+        burn_growth_rate = 0.35,
+        max_burn_rate = 30.0,
         wind_speed=1.0,
         wind_factor=0.05,
         rain_intensity=1.0,
@@ -154,7 +155,8 @@ class ForestFireEnv(gym.Env):
         self.max_fuel = max_fuel
         self.max_moisture = max_moisture
         self.base_burn_rate = base_burn_rate
-        self.burn_acceleration = burn_acceleration
+        self.burn_growth_rate = burn_growth_rate
+        self.max_burn_rate = max_burn_rate
 
         # Wind dynamics
         self.wind_factor = wind_factor
@@ -449,7 +451,7 @@ class ForestFireEnv(gym.Env):
         spatial = np.zeros((5, self.grid_size, self.grid_size), dtype=np.float32)
         spatial[0] = self.fuel / self.max_fuel
         spatial[1] = self.moisture / self.max_moisture
-        max_expected_rate = self.base_burn_rate + (self.burn_acceleration * 20.0)
+        max_expected_rate = self.max_burn_rate
         spatial[2] = np.clip(self.burn_rate / max_expected_rate, 0.0, 1.0)
         spatial[3] = (self.grid == CellState.FIREBREAK).astype(np.float32)
         spatial[4] = (self.grid == CellState.WET).astype(np.float32)
@@ -517,7 +519,10 @@ class ForestFireEnv(gym.Env):
         
         # Consume fuel
         self.fuel[still_burning_mask] -= self.burn_rate[still_burning_mask]
-        self.burn_rate[still_burning_mask] += self.burn_acceleration
+
+        curr_rate = self.burn_rate[still_burning_mask]
+        logistic_delta = self.burn_growth_rate * curr_rate * (1.0 - (curr_rate / self.max_burn_rate))
+        self.burn_rate[still_burning_mask] = np.minimum(self.max_burn_rate, curr_rate + logistic_delta)
         
         # Burnout (Fuel <= 0)
         burnout_mask = still_burning_mask & (self.fuel <= 0.0)
@@ -528,14 +533,24 @@ class ForestFireEnv(gym.Env):
         # Spread to Neighbors 
         new_fires = set()
         
-        # Forced spread from trees that just burnt out
+        # Probabilistic spread from cells that just burnt out
         burnout_coords = np.argwhere(burnout_mask)
         for r, c in burnout_coords:
+            # Intensity ratio at burnout point (normalized 0 to 1)
+            intensity_ratio = self.burn_rate[r, c] / self.max_burn_rate
+            
             for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
                 nr, nc = r + dr, c + dc
                 if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
                     if self.grid[nr, nc] == CellState.HEALTHY:
-                        new_fires.add((nr, nc))
+                        moisture_factor = 1.0 - (self.moisture[nr, nc] / self.max_moisture)
+                        wind_mod = self._calculate_wind_modifier(r, c, nr, nc)
+                        
+                        # Max intensity has probability 1 * moisture_factor * wind_mod (adjusted by intensity ratio)
+                        effective_p = intensity_ratio * moisture_factor * wind_mod
+                        
+                        if self.np_random.random() < min(1.0, effective_p):
+                            new_fires.add((nr, nc))
 
         # Probabilistic spread from currently active fires
         active_coords = np.argwhere(still_burning_mask & ~burnout_mask)
