@@ -51,6 +51,7 @@ class ForestFireRenderer:
         rain_intensity=0.0,
         resources=None,
         mode="human",
+        wind_field=None,
     ):
         if self.window is None and mode == "human":
             pygame.init()
@@ -86,6 +87,43 @@ class ForestFireRenderer:
                 )
                 pygame.draw.rect(canvas, color, rect)
                 pygame.draw.rect(canvas, (200, 200, 200), rect, 1)
+
+        # Draw Wind Vector Overlays (if wind is active and cell size permits)
+        if wind_speed > 0.0 and self.cell_size >= 15:
+            wind_overlay = pygame.Surface((self.window_size, self.window_size), pygame.SRCALPHA)
+            
+            # Sample every few cells or draw on every cell depending on grid size
+            step_stride = max(1, self.grid_size // 10)  # e.g., sample roughly 10x10 arrows max for clarity
+            for r in range(0, self.grid_size, step_stride):
+                for c in range(0, self.grid_size, step_stride):
+                    # Center of the cell
+                    cx = c * self.cell_size + self.cell_size // 2
+                    cy = r * self.cell_size + self.cell_size // 2
+                    
+                    # If wind_field matrix is passed, use local vector; otherwise use global approximation
+                    if wind_field is not None:
+                        dx, dy = wind_field[r, c]
+                    else:
+                        # Fallback approximation based on global wind direction/speed
+                        dx, dy = 0.0, 0.0
+                        if wind_direction == "NORTH": dy = -wind_speed
+                        elif wind_direction == "SOUTH": dy = wind_speed
+                        elif wind_direction == "EAST": dx = wind_speed
+                        elif wind_direction == "WEST": dx = -wind_speed
+
+                    mag = np.hypot(dx, dy)
+                    if mag > 0.05:
+                        # Scale arrow length based on magnitude and cell size
+                        arrow_len = min(self.cell_size * 0.8, max(4, mag * 4))
+                        end_x = cx + int((dx / mag) * arrow_len)
+                        end_y = cy + int((dy / mag) * arrow_len)
+                        
+                        # Draw semi-transparent white/cyan wind vector line
+                        pygame.draw.line(wind_overlay, (255, 255, 255, 120), (cx, cy), (end_x, end_y), 1)
+                        # Tiny dot at the tip
+                        pygame.draw.circle(wind_overlay, (200, 230, 255, 150), (end_x, end_y), 2)
+
+            canvas.blit(wind_overlay, (0, 0))
 
         # Draw Rain Overlay Effects
         if rain_active:

@@ -27,35 +27,97 @@ class CellState(enum.IntEnum):
 
 @dataclass
 class Wind:
-    direction: Direction = Direction.NONE
-    speed: float = 1.0          # Base wind strength when blowing
-    is_active: bool = False     # Whether wind is currently present
-    wind_prob: float = 0.6      # Target probability of wind presence overall
+    @property
+    def speed(self) -> float:
+        return self.current_speed if self.is_active else 0.0
 
+    @property
+    def direction(self):
+        if not self.is_active or self.current_speed == 0.0:
+            return Direction.NONE
+        # Map the continuous angle (radians) to a cardinal Direction enum for UI compatibility
+        deg = np.degrees(self.current_direction_angle) % 360
+        if 45 <= deg < 135:
+            return Direction.SOUTH
+        elif 135 <= deg < 225:
+            return Direction.WEST
+        elif 225 <= deg < 315:
+            return Direction.NORTH
+        else:
+            return Direction.EAST
+
+    def __init__(self, grid_size: int, max_speed: float = 3.0):
+        self.grid_size = grid_size
+        self.max_speed = max_speed
+        
+        self.vector_field = np.zeros((grid_size, grid_size, 2), dtype=np.float32)
+        
+        self.is_active = False
+        self.current_direction_angle = 0.0
+        self.current_speed = 1.0
+        
     def step(self, np_random: np.random.Generator, transition_prob: float = 0.15):
-        """
-        Transitions wind state:
-        - Toggles between Calm (NONE) and Active Wind.
-        - Shifts active wind direction by at most 90 degrees (adjacent direction).
-        """
+        """Smoothly transitions wind direction, speed, and localized patches."""
         if np_random.random() < transition_prob:
-            if not self.is_active:
-                # Wind starts blowing
-                if np_random.random() < self.wind_prob:
-                    self.is_active = True
-                    self.direction = Direction(np_random.integers(0, 4))
-            else:
-                # Wind can stop, shift direction, or stay active
-                roll = np_random.random()
-                if roll < 0.3:
-                    # Wind dies down
-                    self.is_active = False
-                    self.direction = Direction.NONE
-                elif roll < 0.7:
-                    # Shift 90 degrees clockwise or counterclockwise
-                    turn = np_random.choice([-1, 1])
-                    current_dir_val = self.direction.value if self.direction != Direction.NONE else 0
-                    self.direction = Direction((current_dir_val + turn) % 4)
+            if not self.is_active and np_random.random() < 0.6:
+                self.is_active = True
+                self.current_speed = np_random.uniform(1.0, 3.0)
+                # Pick a random center point for the localized wind pocket/front
+                self.patch_center = np.array([
+                    np_random.uniform(0, self.grid_size),
+                    np_random.uniform(0, self.grid_size)
+                ], dtype=np.float32)
+            elif self.is_active and np_random.random() < 0.3:
+                self.is_active = False
+
+        if not self.is_active:
+            self.current_speed = max(0.0, self.current_speed - 0.2)
+            if self.current_speed == 0.0:
+                self.vector_field *= 0.90
+                return
+
+        # Drift the patch center slightly over time for organic movement
+        if hasattr(self, 'patch_center'):
+            self.patch_center += np_random.uniform(-0.5, 0.5, size=2)
+            # Keep within grid bounds
+            self.patch_center = np.clip(self.patch_center, 0, self.grid_size)
+        else:
+            self.patch_center = np.array([self.grid_size / 2.0, self.grid_size / 2.0], dtype=np.float32)
+
+        # Gradually shift direction and speed
+        self.current_direction_angle += np_random.uniform(-0.25, 0.25)
+        self.current_speed = np.clip(self.current_speed + np_random.uniform(-0.2, 0.2), 0.5, self.max_speed)
+
+        base_dx = np.cos(self.current_direction_angle) * self.current_speed
+        base_dy = np.sin(self.current_direction_angle) * self.current_speed
+
+        target_field = np.zeros((self.grid_size, self.grid_size, 2), dtype=np.float32)
+        
+        # Define a localized radius for the wind pocket
+        pocket_radius = self.grid_size * 0.4
+
+        for r in range(self.grid_size):
+            for c in range(self.grid_size):
+                # Calculate distance from this cell to the moving wind pocket center
+                dist = np.hypot(r - self.patch_center[0], c - self.patch_center[1])
+                
+                # Smooth falloff so wind is strongest near the center and fades out to 0 at the edges
+                if dist < pocket_radius:
+                    spatial_mod = 0.5 * (1.0 + np.cos(np.pi * dist / pocket_radius))
+                else:
+                    spatial_mod = 0.0  # Calm outside the localized wind pocket!
+
+                target_field[r, c, 0] = base_dx * spatial_mod
+                target_field[r, c, 1] = base_dy * spatial_mod
+
+        # Smooth temporal blending
+        self.vector_field = 0.8 * self.vector_field + 0.2 * target_field
+
+    def get_vector_at(self, r: int, c: int) -> Tuple[float, float]:
+        """Returns the localized (dx, dy) wind vector at cell (r, c)."""
+        if not self.is_active and np.all(self.vector_field == 0):
+            return 0.0, 0.0
+        return float(self.vector_field[r, c, 0]), float(self.vector_field[r, c, 1])
 
 class Rain:
     def __init__(
@@ -161,7 +223,7 @@ class ForestFireEnv(gym.Env):
         # Wind dynamics
         self.wind_factor = wind_factor
         self.default_wind_speed = wind_speed
-        self.wind = Wind(direction=Direction.NORTH, speed=self.default_wind_speed)
+        self.wind = Wind(grid_size=self.grid_size, max_speed=3.0)
 
         # Rain dynamics
         self.rain_intensity = rain_intensity
@@ -229,15 +291,14 @@ class ForestFireEnv(gym.Env):
         self._watered_this_step = np.zeros((self.grid_size, self.grid_size), dtype=bool)
 
         # Initialize wind
-        is_active = bool(self.np_random.random() < 0.6)  # 60% chance starting with wind
-        initial_dir = Direction(self.np_random.integers(0, 4)) if is_active else Direction.NONE
-
-        self.wind = Wind(
-            direction=initial_dir,
-            speed=self.default_wind_speed,
-            is_active=is_active,
-            wind_prob=0.6,
-        )
+        self.wind = Wind(grid_size=self.grid_size, max_speed=3.0)
+        if self.np_random.random() < 0.6:
+            self.wind.is_active = True
+            self.wind.current_speed = self.np_random.uniform(0.5, 1.5)
+            self.wind.current_direction_angle = self.np_random.uniform(0, 2 * np.pi)
+        else:
+            self.wind.is_active = False
+            self.wind.current_speed = 0.0
 
         # Initialize rain
         self.rain = Rain(
@@ -289,17 +350,20 @@ class ForestFireEnv(gym.Env):
         return DIRECTION_OFFSETS[self.wind.direction]
 
     def _calculate_wind_modifier(self, source_r: int, source_c: int, target_r: int, target_c: int) -> float:
-        """Calculates spread multiplier. Returns 1.0 when calm."""
-        if not self.wind.is_active or self.wind.direction == Direction.NONE:
-            return 1.0
-
+        """Calculates spread multiplier using localized, smoothly varying wind vectors."""
         spread_dr = target_r - source_r
         spread_dc = target_c - source_c
 
-        wind_dr, wind_dc = self.get_wind_vector_at(source_r, source_c)
-        alignment = (spread_dr * wind_dr) + (spread_dc * wind_dc)
+        # Get localized wind vector at the source burning cell
+        wind_dx, wind_dy = self.wind.get_vector_at(source_r, source_c)
+        
+        if wind_dx == 0.0 and wind_dy == 0.0:
+            return 1.0
 
-        modifier = 1.0 + (alignment * self.wind.speed * self.wind_factor)
+        # Alignment between spread direction and localized wind vector
+        alignment = (spread_dr * wind_dx) + (spread_dc * wind_dy)
+
+        modifier = 1.0 + (alignment * self.wind_factor)
         return max(0.00, modifier)
 
     def add_moisture(self, r, c, amount):
@@ -477,7 +541,8 @@ class ForestFireEnv(gym.Env):
             "total_remaining_fuel": float(np.sum(self.fuel)),
             "total_moisture": float(np.sum(self.moisture)),
             "wind_direction": "CALM" if not self.wind.is_active else self.wind.direction.name,
-            "wind_speed": self.wind.speed if self.wind.is_active else 0.0,
+            "wind_speed": self.wind.speed,
+            "wind_vector_field": self.wind.vector_field,
             "rain_active": self.rain.is_active,
             "rain_intensity": self.rain.intensity if self.rain.is_active else 0.0,
             "resources": {
@@ -743,6 +808,7 @@ class ForestFireEnv(gym.Env):
                 rain_intensity=self.rain.intensity,
                 resources=info["resources"],
                 mode=self.render_mode,
+                wind_field=info.get("wind_vector_field"),
         )
 
     def close(self):
