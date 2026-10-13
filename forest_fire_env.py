@@ -286,9 +286,6 @@ class ForestFireEnv(gym.Env):
         self._watered_this_step = np.zeros((self.grid_size, self.grid_size), dtype=bool)
 
         # Suppression resources
-        self.max_water_drops = max_water_drops
-        self.max_firebreak_capacity = max_firebreak_capacity
-        self.max_budget = max_budget
         self.action_costs = dict(ACTION_COSTS if action_costs is None else action_costs)
         self.water_drop_amount = water_drop_amount
         self.truck_amount = truck_amount
