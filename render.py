@@ -52,6 +52,7 @@ class ForestFireRenderer:
         resources=None,
         mode="human",
         wind_field=None,
+        rain_field=None,
     ):
         if self.window is None and mode == "human":
             pygame.init()
@@ -126,25 +127,37 @@ class ForestFireRenderer:
             canvas.blit(wind_overlay, (0, 0))
 
         # Draw Rain Overlay Effects
-        if rain_active:
-            rain_surface = pygame.Surface((self.window_size, self.window_size), pygame.SRCALPHA)
-            rain_surface.fill(self.RAIN_OVERLAY_COLOR)
-
-            # Draw pseudo-random animated rain streaks
+        if rain_active and rain_field is not None:
+            rain_overlay = pygame.Surface((self.window_size, self.window_size), pygame.SRCALPHA)
             ticks = pygame.time.get_ticks()
-            num_drops = int(25 + np.clip(rain_intensity * 5, 0, 100))
-            for i in range(num_drops):
-                rx = (ticks * 7 + i * 83) % self.window_size
-                ry = (ticks * 13 + i * 137) % self.window_size
-                pygame.draw.line(
-                    rain_surface,
-                    self.RAIN_DROP_COLOR,
-                    (rx, ry),
-                    (rx - 2, ry + 8),
-                    2,
-                )
 
-            canvas.blit(rain_surface, (0, 0))
+            for r in range(self.grid_size):
+                for c in range(self.grid_size):
+                    cell_rain_val = rain_field[r, c]
+                    if cell_rain_val > 0.0:
+                        # Draw a semi-transparent blue tint over wet/storm cells scaled by intensity
+                        alpha = int(np.clip(cell_rain_val * 25, 10, 120))
+                        cell_rect = pygame.Rect(
+                            c * self.cell_size,
+                            r * self.cell_size,
+                            self.cell_size,
+                            self.cell_size,
+                        )
+                        pygame.draw.rect(rain_overlay, (50, 100, 200, alpha), cell_rect)
+
+                        # Draw subtle rain streaks inside active storm cells if cell size is large enough
+                        if self.cell_size >= 12 and (r + c + ticks // 100) % 3 == 0:
+                            rx = c * self.cell_size + self.cell_size // 2
+                            ry = r * self.cell_size + self.cell_size // 2
+                            pygame.draw.line(
+                                rain_overlay,
+                                self.RAIN_DROP_COLOR,
+                                (rx, ry - 4),
+                                (rx - 2, ry + 4),
+                                1,
+                            )
+
+            canvas.blit(rain_overlay, (0, 0))
 
         # Draw Telemetry HUD Overlay
         if mode == "human" and self.font is not None:

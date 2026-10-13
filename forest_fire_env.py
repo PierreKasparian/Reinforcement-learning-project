@@ -120,36 +120,84 @@ class Wind:
         return float(self.vector_field[r, c, 0]), float(self.vector_field[r, c, 1])
 
 class Rain:
+    @property
+    def intensity(self) -> float:
+        return self.current_intensity if self.is_active else 0.0
+
     def __init__(
         self,
-        intensity: float = 5.0,     # Moisture units added per step during rain
-        is_active: bool = True,
-        rain_prob: float = 0.2,      # Chance of rain starting/stopping
+        grid_size: int,
+        max_intensity: float = 5.0,
+        rain_prob: float = 0.2,
     ):
-        self.intensity = intensity
-        self.is_active = is_active
+        self.grid_size = grid_size
+        self.max_intensity = max_intensity
         self.rain_prob = rain_prob
+        
+        self.is_active = False
+        self.current_intensity = 0.0
+        self.storm_center = np.array([grid_size / 2.0, grid_size / 2.0], dtype=np.float32)
+        self.storm_radius = grid_size * 0.35  # Size of the rain pocket
+        
+        # Intensity map representing moisture added per cell this step
+        self.intensity_field = np.zeros((grid_size, grid_size), dtype=np.float32)
 
-    def step(self, np_random: np.random.Generator, transition_prob: float = 0.1):
-        """Randomly toggles rain state on/off."""
+    def step(self, np_random: np.random.Generator, wind_field=None, transition_prob: float = 0.1):
+        """Smoothly transitions rain presence, intensity, and drifts with wind."""
+        # Toggle rain state smoothly
         if np_random.random() < transition_prob:
-            if not self.is_active:
-                if np_random.random() < self.rain_prob:
-                    self.is_active = True
-            else:
-                if np_random.random() < 0.4:  # Chance rain stops
-                    self.is_active = False
+            if not self.is_active and np_random.random() < self.rain_prob:
+                self.is_active = True
+                self.current_intensity = np_random.uniform(1.0, 3.0)
+                # Spawn storm at a random edge or location
+                self.storm_center = np.array([
+                    np_random.uniform(0, self.grid_size),
+                    np_random.uniform(0, self.grid_size)
+                ], dtype=np.float32)
+            elif self.is_active and np_random.random() < 0.4:
+                self.is_active = False
+
+        if not self.is_active:
+            # Fade out intensity gradually towards zero
+            self.current_intensity = max(0.0, self.current_intensity - 0.3)
+            if self.current_intensity == 0.0:
+                self.intensity_field.fill(0.0)
+                return
+
+        # Gradually shift intensity (no instant jumps)
+        intensity_delta = np_random.uniform(-0.4, 0.4)
+        self.current_intensity = np.clip(self.current_intensity + intensity_delta, 0.5, self.max_intensity)
+
+        # Storm Advection: If wind is present, drift the storm center along the local wind vector
+        if wind_field is not None:
+            # Sample wind vector at current storm center
+            sc_r = int(np.clip(self.storm_center[0], 0, self.grid_size - 1))
+            sc_c = int(np.clip(self.storm_center[1], 0, self.grid_size - 1))
+            wind_dx, wind_dy = wind_field[sc_r, sc_c]
+            
+            # Drift storm center with wind (scaled down for smooth motion)
+            self.storm_center[0] += wind_dy * 0.5  # row offset matches dy
+            self.storm_center[1] += wind_dx * 0.5  # col offset matches dx
+        
+        # Random internal drift if calm or to add organic movement
+        self.storm_center += np_random.uniform(-0.3, 0.3, size=2)
+        
+        # Wrap or bound storm center so it stays within/near the grid
+        self.storm_center = np.clip(self.storm_center, -2.0, self.grid_size + 2.0)
+
+        # Build the localized rain intensity field using a smooth radial falloff
+        self.intensity_field.fill(0.0)
+        for r in range(self.grid_size):
+            for c in range(self.grid_size):
+                dist = np.hypot(r - self.storm_center[0], c - self.storm_center[1])
+                if dist < self.storm_radius:
+                    # Smooth bell-shaped intensity falloff from center to edge
+                    spatial_falloff = 0.5 * (1.0 + np.cos(np.pi * dist / self.storm_radius))
+                    self.intensity_field[r, c] = self.current_intensity * spatial_falloff
 
     def get_moisture_increase(self, r: int, c: int, grid_shape: tuple) -> float:
-        """
-        Returns moisture added to cell (r, c) this step.
-        Uniform full-grid coverage for now.
-        """
-        if not self.is_active:
-            return 0.0
-
-        # Full-grid uniform coverage
-        return self.intensity
+        """Returns localized moisture added to cell (r, c) this step."""
+        return float(self.intensity_field[r, c])
 
 
 @dataclass(frozen=True)
@@ -228,7 +276,7 @@ class ForestFireEnv(gym.Env):
         # Rain dynamics
         self.rain_intensity = rain_intensity
         self.rain_prob = rain_prob
-        self.rain = Rain(intensity=rain_intensity, rain_prob=rain_prob, is_active=False)
+        self.rain = Rain(grid_size=self.grid_size, max_intensity=rain_intensity, rain_prob=rain_prob)
 
         self.dry_rate = dry_rate
         self._watered_this_step = np.zeros((self.grid_size, self.grid_size), dtype=bool)
@@ -302,9 +350,9 @@ class ForestFireEnv(gym.Env):
 
         # Initialize rain
         self.rain = Rain(
-            intensity=self.rain_intensity,
+            grid_size=self.grid_size,
+            max_intensity=self.rain_intensity,
             rain_prob=self.rain_prob,
-            is_active=False,
         )
 
         # Suppression resources
@@ -545,6 +593,7 @@ class ForestFireEnv(gym.Env):
             "wind_vector_field": self.wind.vector_field,
             "rain_active": self.rain.is_active,
             "rain_intensity": self.rain.intensity if self.rain.is_active else 0.0,
+            "rain_intensity_field": self.rain.intensity_field,
             "resources": {
                 "water_drops_remaining": self.water_drops_remaining,
                 "firebreak_capacity": self.firebreak_capacity,
@@ -809,6 +858,7 @@ class ForestFireEnv(gym.Env):
                 resources=info["resources"],
                 mode=self.render_mode,
                 wind_field=info.get("wind_vector_field"),
+                rain_field=info.get("rain_intensity_field"),
         )
 
     def close(self):
