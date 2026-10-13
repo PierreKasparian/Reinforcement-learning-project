@@ -211,6 +211,7 @@ class RewardWeights:
     fire_damage: float = 1.5
     action_cost: float = 0.01
     time: float = 0.005
+    suppression: float = 0.02
     success: float = 1.0
     failure: float = 0.5
 
@@ -656,6 +657,7 @@ class ForestFireEnv(gym.Env):
         
         # Burnout (Fuel <= 0)
         burnout_mask = still_burning_mask & (self.fuel <= 0.0)
+        burnout_rates = self.burn_rate.copy()
         self.fuel[burnout_mask] = 0.0
         self.grid[burnout_mask] = CellState.BURNT
         self.burn_rate[burnout_mask] = 0.0
@@ -667,18 +669,19 @@ class ForestFireEnv(gym.Env):
         burnout_coords = np.argwhere(burnout_mask)
         for r, c in burnout_coords:
             # Intensity ratio at burnout point (normalized 0 to 1)
-            intensity_ratio = self.burn_rate[r, c] / self.max_burn_rate
-            
+            intensity_ratio = burnout_rates[r, c] / self.max_burn_rate
+
             for dr, dc in NEIGHBOR_OFFSETS:
                 nr, nc = r + dr, c + dc
                 if 0 <= nr < self.grid_size and 0 <= nc < self.grid_size:
                     if self.grid[nr, nc] == CellState.HEALTHY:
                         moisture_factor = 1.0 - (self.moisture[nr, nc] / self.max_moisture)
                         wind_mod = self._calculate_wind_modifier(r, c, nr, nc)
-                        
+
                         dist = np.hypot(dr, dc)
-                        effective_p = (intensity_ratio * moisture_factor * wind_mod) * (1.0 / dist)
-                        
+                        base_prob = self.p_spread * (1.0 + intensity_ratio) * moisture_factor * wind_mod
+                        effective_p = base_prob * (1.0 / dist)
+
                         if self.np_random.random() < min(1.0, effective_p):
                             new_fires.add((nr, nc))
 
@@ -715,6 +718,7 @@ class ForestFireEnv(gym.Env):
         active_fires,
         terminated,
         truncated,
+        burn_rate_suppressed,
     ):
         """Calculate the reward and expose its components without changing state."""
         w = self.reward_weights
@@ -731,9 +735,12 @@ class ForestFireEnv(gym.Env):
 
         fires_extinguished = max(0, fires_before - active_fires)
 
+        fires_delta = fires_before - active_fires
+
         components = {
             "fire_damage": -w.fire_damage * fuel_burned / fuel_scale,
             "action_cost": -w.action_cost * budget_spent / budget_scale,
+            "suppression": w.suppression * (burn_rate_suppressed / max(float(self.max_burn_rate), 1.0)),
             "time": -w.time / time_scale if active_fires > 0 else 0.0,
             "terminal": 0.0,
         }
@@ -744,7 +751,7 @@ class ForestFireEnv(gym.Env):
                 terminated
                 and active_fires == 0
                 and self.failure_reason is None
-                and preserved_fraction > 0.0
+                and preserved_fraction >= 0.50 # Must preserve at least 50%
             )
             if success:
                 components["terminal"] = w.success * preserved_fraction
@@ -771,10 +778,11 @@ class ForestFireEnv(gym.Env):
         spec = decode_action(int(action), self.grid_size)
         self.last_action = spec
 
-        # Record resources before applying the intervention.
+        # Record resources and fire intensity before applying the intervention
         budget_before = self.budget_remaining
         fuel_before_action = float(np.sum(self.fuel, dtype=np.float64))
         fires_before = int(np.sum(self.grid == CellState.BURNING))
+        burn_rate_before_action = float(np.sum(self.burn_rate, dtype=np.float64))
 
         self.budget_remaining = min(
         self.max_budget, 
@@ -807,6 +815,8 @@ class ForestFireEnv(gym.Env):
 
         # Separate intervention-related fuel removal from fire damage.
         fuel_before_spread = float(np.sum(self.fuel, dtype=np.float64))
+        burn_rate_before_spread = float(np.sum(self.burn_rate, dtype=np.float64))
+        burn_rate_suppressed = max(0.0, burn_rate_before_action - burn_rate_before_spread)
         self._spread_fire()
 
         active_fires = np.sum(self.grid == CellState.BURNING)
@@ -834,6 +844,7 @@ class ForestFireEnv(gym.Env):
             active_fires=active_fires,
             terminated=terminated,
             truncated=truncated,
+            burn_rate_suppressed=burn_rate_suppressed,
         )
         info = self._get_info()
         info["reward_components"] = components
