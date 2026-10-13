@@ -5,29 +5,29 @@ from forest_fire_env import ForestFireEnv
 # CONFIGURATION & SIMULATION PARAMETERS
 
 # Environment Setup
-GRID_SIZE = 30
+GRID_SIZE = 15
 MAX_STEPS = 200
-SIMULATION_DELAY = 0.10  # Seconds per step (lower = faster)
+SIMULATION_DELAY = 0.25  # Seconds per step (lower = faster)
 LOG_FILE_PATH = "simulation_log.txt"
 
 # Fire Dynamics
-P_SPREAD = 0.1           # Base fire spread probability
+P_SPREAD = 0.05           # Base fire spread probability
 MAX_FUEL = 100.0         # Maximum fuel per cell
 MAX_MOISTURE = 100.0     # Moisture cap per cell
-BASE_BURN_RATE = 2.0     # Initial burn rate for new fires
+BASE_BURN_RATE = 1.0     # Initial burn rate for new fires
 BURN_GROWTH_RATE = 0.35
 MAX_BURN_RATE = 30.0
 
 # Wind Mechanics
 WIND_SPEED = 1.0         # Wind velocity scalar
-WIND_FACTOR = 1.0        # Spread impact multiplier (1.0 = +100% downwind, -100% upwind)
+WIND_FACTOR = 0.05        # Spread impact multiplier (1.0 = +100% downwind, -100% upwind)
 
 # Rain Mechanics
 START_WITH_RAIN = True   # Force rain ON at step 0 (True / False)
-RAIN_INTENSITY = 0.1     # Moisture units added per cell per step during rain
-RAIN_PROB = 0.2          # Probability of rain naturally starting/stopping per check
+RAIN_INTENSITY = 50     # Moisture units added per cell per step during rain
+RAIN_PROB = 0.1          # Probability of rain naturally starting/stopping per check
 
-DRY_RATE = 1.0
+DRY_RATE = 2
 
 
 if __name__ == "__main__":

@@ -201,7 +201,7 @@ class Rain:
 
     def get_moisture_increase(self, r: int, c: int, grid_shape: tuple) -> float:
         """Returns localized moisture added to cell (r, c) this step."""
-        return float(self.intensity_field[r, c])
+        return float(self.intensity_field[r, c] // 2)
 
 
 @dataclass(frozen=True)
@@ -222,16 +222,16 @@ class ForestFireEnv(gym.Env):
         self,
         render_mode=None,
         grid_size=15,
-        p_spread=0.045,
+        p_spread=0.08,
         max_steps=300,
         max_fuel=100.0,
         max_moisture=100.0,
         base_burn_rate=2.0,
         burn_growth_rate = 0.35,
-        max_burn_rate = 30.0,
+        max_burn_rate = 25.0,
         wind_speed=1.0,
         wind_factor=0.05,
-        rain_intensity=1.0,
+        rain_intensity=10.0,
         rain_prob=0.1,
         budget_replenish_rate=0.5,
         water_drop_cooldown=5,
@@ -240,13 +240,13 @@ class ForestFireEnv(gym.Env):
         num_fire_trucks=2,
         truck_turnaround_steps=3,
         # Set base resources for a 15x15 grid for dynamic scaling
-        max_water_drops=12,
+        max_water_drops=8,
         max_firebreak_capacity=15,
-        max_budget=150,
+        max_budget=100,
         action_costs=None,
-        water_drop_amount=50.0,
-        truck_amount=35.0,
-        dry_rate=0.5,
+        water_drop_amount=20.0,
+        truck_amount=15.0,
+        dry_rate=0.2,
         reward_weights=None,
         **kwargs
     ):
@@ -275,7 +275,7 @@ class ForestFireEnv(gym.Env):
         # Wind dynamics
         self.wind_factor = wind_factor
         self.default_wind_speed = wind_speed
-        self.wind = Wind(grid_size=self.grid_size, max_speed=3.0)
+        self.wind = Wind(grid_size=self.grid_size, max_speed=10.0)
 
         # Rain dynamics
         self.rain_intensity = rain_intensity
@@ -382,8 +382,8 @@ class ForestFireEnv(gym.Env):
         self.grid[r, c] = CellState.BURNING
         self.burn_rate[r, c] = self.base_burn_rate
 
-        min_burn_steps = 1
-        max_burn_steps = max(3, self.grid_size // 4)
+        min_burn_steps = 3
+        max_burn_steps = max(5, (self.grid_size // 3) * 2)
         initial_burn_steps = self.np_random.integers(min_burn_steps, max_burn_steps + 1)
 
         for _ in range(initial_burn_steps):
@@ -816,7 +816,6 @@ class ForestFireEnv(gym.Env):
         healthy_trees = np.sum(self.grid == CellState.HEALTHY)
         budget_exhausted = self.budget_remaining == 0 and active_fires > 0
 
-        # TODO: add failure termination when the burned area reaches the grid edge.
         terminated = active_fires == 0 or healthy_trees == 0
         truncated = self.current_step >= self.max_steps
 
