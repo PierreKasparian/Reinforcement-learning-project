@@ -15,7 +15,8 @@ P_SPREAD = 0.1           # Base fire spread probability
 MAX_FUEL = 100.0         # Maximum fuel per cell
 MAX_MOISTURE = 100.0     # Moisture cap per cell
 BASE_BURN_RATE = 2.0     # Initial burn rate for new fires
-BURN_ACCELERATION = 1.5  # Rate of fire intensity increase per step
+BURN_GROWTH_RATE = 0.35
+MAX_BURN_RATE = 30.0
 
 # Wind Mechanics
 WIND_SPEED = 1.0         # Wind velocity scalar
@@ -39,7 +40,8 @@ if __name__ == "__main__":
         max_fuel=MAX_FUEL,
         max_moisture=MAX_MOISTURE,
         base_burn_rate=BASE_BURN_RATE,
-        burn_acceleration=BURN_ACCELERATION,
+        burn_growth_rate = BURN_GROWTH_RATE,
+        max_burn_rate = MAX_BURN_RATE,
         wind_speed=WIND_SPEED,
         wind_factor=WIND_FACTOR,
         rain_intensity=RAIN_INTENSITY,
