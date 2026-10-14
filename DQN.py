@@ -13,38 +13,58 @@ class DQNAgent:
         self.q_network = WildfireCNNQNetwork(action_size, grid_size, num_spatial, num_global).to(device)
         self.target_network = WildfireCNNQNetwork(action_size, grid_size, num_spatial, num_global).to(device)
         self.target_network.load_state_dict(self.q_network.state_dict())
-        
-        self.optimizer = optim.Adam(self.q_network.parameters(), lr=2.5e-4)
+        self.target_network.eval()
+        self.optimizer = optim.Adam(self.q_network.parameters(), lr=1e-4)
         self.memory = ReplayBuffer(100000)
         
         self.batch_size = 64
         self.gamma = 0.99
         self.epsilon = 1.0
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.9995
+        self.epsilon_decay = 0.9985  # Reaches 0.05 around episode 2000
+        
+        # DQN stability parameters
+        self.warmup_steps = 5000
+        self.train_freq = 4
+        self.target_update_steps = 1000
+        self.total_steps = 0
         
     def act(self, state, action_mask=None):
         if random.random() < self.epsilon:
             if action_mask is not None:
-                valid_actions = np.where(action_mask)[0]
-                if len(valid_actions) > 0:
-                    return int(random.choice(valid_actions))
+                # Group valid actions
+                g2 = (self.action_size - 1) // 5
+                type_slices = [
+                    np.array([0]) if action_mask[0] else np.array([], dtype=int),
+                    np.where(action_mask[1 : 1 + 2 * g2])[0] + 1,
+                    np.where(action_mask[1 + 2 * g2 : 1 + 4 * g2])[0] + 1 + 2 * g2,
+                    np.where(action_mask[1 + 4 * g2 :])[0] + 1 + 4 * g2,
+                ]
+                non_empty_types = [arr for arr in type_slices if len(arr) > 0]
+                if len(non_empty_types) > 0:
+                    chosen_group = random.choice(non_empty_types)
+                    return int(random.choice(chosen_group))
             return random.randint(0, self.action_size - 1)
         
         sp_tensor = torch.tensor(np.array(state["spatial"]), dtype=torch.float32).unsqueeze(0).to(device)
         gl_tensor = torch.tensor(np.array(state["global"]), dtype=torch.float32).unsqueeze(0).to(device)
         
+        self.q_network.eval()
         with torch.no_grad():
             q_values = self.q_network(sp_tensor, gl_tensor)
             
             if action_mask is not None:
-                mask_tensor = torch.tensor(action_mask, dtype=torch.bool).to(device)
-                q_values[0, ~mask_tensor] = -float('inf')
+                mask_tensor = torch.tensor(action_mask, dtype=torch.bool, device=device)
+                q_values[0, ~mask_tensor] = -1e8
                 
-        return torch.argmax(q_values).item()
+        self.q_network.train()
+        return int(torch.argmax(q_values).item())
         
     def learn(self):
-        if len(self.memory) < self.batch_size:
+        self.total_steps += 1
+        if len(self.memory) < self.warmup_steps:
+            return
+        if self.total_steps % self.train_freq != 0:
             return
             
         states, actions, rewards, next_states, dones, next_masks = self.memory.sample(self.batch_size)
@@ -55,23 +75,28 @@ class DQNAgent:
         
         with torch.no_grad():
             next_q_values = self.target_network(next_sp_states, next_gl_states)
-            next_q_values[~next_masks] = -float('inf')
+            next_q_values[~next_masks] = -1e8
             
             max_next_q_values = next_q_values.max(1)[0].unsqueeze(1)
             target_q_values = rewards + (self.gamma * max_next_q_values * (1 - dones))
             
         loss = nn.SmoothL1Loss()(q_values, target_q_values)
+        
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=10.0)
         self.optimizer.step()
+
+        if self.total_steps % self.target_update_steps == 0:
+            self.target_network.load_state_dict(self.q_network.state_dict())
 
     def save_checkpoint(self, filepath):
         checkpoint = {
             'q_network_state_dict': self.q_network.state_dict(),
             'target_network_state_dict': self.target_network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'epsilon': self.epsilon
+            'epsilon': self.epsilon,
+            'total_steps': self.total_steps,
         }
         torch.save(checkpoint, filepath)
 
@@ -81,3 +106,4 @@ class DQNAgent:
         self.target_network.load_state_dict(checkpoint['target_network_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.epsilon = checkpoint['epsilon']
+        self.total_steps = checkpoint.get('total_steps', 0)
