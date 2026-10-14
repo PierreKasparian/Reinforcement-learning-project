@@ -365,6 +365,8 @@ class ForestFireEnv(gym.Env):
         self.truck_timers = np.zeros(self.num_fire_trucks, dtype=np.int32)
         self._sync_vehicle_availability()
         self.budget_remaining = self.max_budget
+        self.firebreak_progress = np.zeros((self.grid_size, self.grid_size), dtype=np.int32)
+        self.active_project_cell = None
 
         self.last_action = ActionSpec(ActionType.NOOP)
         self.action_valid = True
