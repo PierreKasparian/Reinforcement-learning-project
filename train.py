@@ -44,8 +44,8 @@ def main():
     env = ForestFireEnv(grid_size=args.grid_size)
 
     action_size = env.action_space.n 
-    num_spatial = 5 
-    num_global = 5 
+    num_spatial = env.observation_space["spatial"].shape[0]
+    num_global = env.observation_space["global"].shape[0]
     
     if args.algo == 'rainbow':
         agent = RainbowAgent(action_size, args.grid_size, num_spatial, num_global)
