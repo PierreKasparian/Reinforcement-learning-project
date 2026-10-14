@@ -241,7 +241,6 @@ class ForestFireEnv(gym.Env):
         truck_turnaround_steps=3,
         # Set base resources for a 15x15 grid for dynamic scaling
         max_water_drops=8,
-        max_firebreak_capacity=15,
         max_budget=100,
         action_costs=None,
         water_drop_amount=20.0,
@@ -259,7 +258,8 @@ class ForestFireEnv(gym.Env):
         # Dynamic Scaling based on Grid Area
         area_ratio = (self.grid_size / 15.0) ** 2
         self.max_water_drops = int(max_water_drops * area_ratio)
-        self.max_firebreak_capacity = int(max_firebreak_capacity * area_ratio)
+        self.firebreak_progress = np.zeros((self.grid_size, self.grid_size), dtype=np.int32)
+        self.max_construction_steps = 4  # Takes 4 steps to fully clear a cell into a firebreak
         self.max_budget = int(max_budget * area_ratio)
         
         # Dynamically scale the size of the tools so they remain useful on larger grids
@@ -287,7 +287,8 @@ class ForestFireEnv(gym.Env):
 
         # Suppression resources
         self.max_water_drops = max_water_drops
-        self.max_firebreak_capacity = max_firebreak_capacity
+        self.active_project_cell = None
+        self.max_construction_steps = 4
         self.max_budget = max_budget
         self.action_costs = dict(ACTION_COSTS if action_costs is None else action_costs)
         self.water_drop_amount = water_drop_amount
@@ -317,7 +318,7 @@ class ForestFireEnv(gym.Env):
 
         self.observation_space = spaces.Dict({
             "spatial": spaces.Box(low=0.0, high=1.0, shape=(5, self.grid_size, self.grid_size), dtype=np.float32),
-            "global": spaces.Box(low=0.0, high=1.0, shape=(6,), dtype=np.float32)
+            "global": spaces.Box(low=0.0, high=1.0, shape=(5,), dtype=np.float32)
         })
 
         self.action_space = spaces.Discrete(n_actions(self.grid_size))
@@ -361,7 +362,6 @@ class ForestFireEnv(gym.Env):
 
         # Suppression resources
         self.water_drops_remaining = self.max_water_drops
-        self.firebreak_capacity = self.max_firebreak_capacity
         self.cooldown_counter = 0
         self.aircraft_cooldown = 0
         self.truck_timers = np.zeros(self.num_fire_trucks, dtype=np.int32)
@@ -533,15 +533,14 @@ class ForestFireEnv(gym.Env):
             return any(self.grid[r, c] in (CellState.HEALTHY, CellState.BURNING) for r, c in cells)
 
         if spec.type == ActionType.FIREBREAK:
-            if self.firebreak_capacity <= 0:
+            if self.active_project_cell is not None:
+                if (spec.r, spec.c) != self.active_project_cell:
+                    return False
+
+            target_state = self.grid[spec.r, spec.c]
+            if target_state in (CellState.BURNING, CellState.BURNT, CellState.FIREBREAK):
                 return False
-            cells = line_cells(spec, self.grid_size, self.line_half_length)
-            if any(self.grid[r, c] == CellState.BURNING for r, c in cells):
-                return False
-            return any(
-                self.grid[r, c] in (CellState.HEALTHY, CellState.WET, CellState.BURNT)
-                for r, c in cells
-            )
+            return target_state in (CellState.HEALTHY, CellState.WET)
 
         if spec.type == ActionType.FIRE_TRUCK:
             if not self.fire_truck_available:
@@ -571,12 +570,29 @@ class ForestFireEnv(gym.Env):
         self.add_moisture(spec.r, spec.c, self.truck_amount)
 
     def _apply_firebreak(self, spec: ActionSpec):
-        """Turn non-burning, non-firebreak cells along the target line into firebreaks."""
-        for r, c in line_cells(spec, self.grid_size, self.line_half_length):
-            if self.grid[r, c] in (CellState.HEALTHY, CellState.WET, CellState.BURNT):
+        """Progressively cut down vegetation on a single target cell over multiple steps."""
+        r, c = spec.r, spec.c
+        
+        if self.grid[r, c] in (CellState.HEALTHY, CellState.WET):
+            # Set this as the active project cell if not already set
+            self.active_project_cell = (r, c)
+
+            # Increment construction progress
+            self.firebreak_progress[r, c] = min(
+                self.max_construction_steps, 
+                self.firebreak_progress[r, c] + 1
+            )
+            
+            # Permanently remove fuel proportional to steps completed
+            cleared_fraction = self.firebreak_progress[r, c] / self.max_construction_steps
+            self.fuel[r, c] = max(0.0, self.max_fuel * (1.0 - cleared_fraction))
+
+            # Once fully cleared, finalize as a permanent firebreak and clear active project
+            if self.firebreak_progress[r, c] >= self.max_construction_steps:
                 self.grid[r, c] = CellState.FIREBREAK
                 self.fuel[r, c] = 0.0
                 self.burn_rate[r, c] = 0.0
+                self.active_project_cell = None
 
     def _get_obs(self):
         spatial = np.zeros((5, self.grid_size, self.grid_size), dtype=np.float32)
@@ -590,7 +606,6 @@ class ForestFireEnv(gym.Env):
         global_obs = np.array([
             self.wind.direction.value / 4.0,
             self.water_drops_remaining / self.max_water_drops,
-            self.firebreak_capacity / self.max_firebreak_capacity,
             1.0 - (self.aircraft_cooldown / self.aircraft_turnaround_steps),
             float(np.mean(self.truck_timers == 0)),
             self.budget_remaining / self.max_budget
@@ -615,7 +630,6 @@ class ForestFireEnv(gym.Env):
             "rain_intensity_field": self.rain.intensity_field,
             "resources": {
                 "water_drops_remaining": self.water_drops_remaining,
-                "firebreak_capacity": self.firebreak_capacity,
                 "aircraft_available": self.aircraft_available,
                 "fire_truck_available": self.fire_truck_available,
                 "aircraft_cooldown": int(self.aircraft_cooldown),
@@ -680,7 +694,8 @@ class ForestFireEnv(gym.Env):
                         wind_mod = self._calculate_wind_modifier(r, c, nr, nc)
                         
                         dist = np.hypot(dr, dc)
-                        effective_p = (intensity_ratio * moisture_factor * wind_mod) * (1.0 / dist)
+                        fuel_fraction = self.fuel[nr, nc] / self.max_fuel
+                        effective_p = (intensity_ratio * moisture_factor * wind_mod) * (1.0 / dist) * fuel_fraction
                         
                         if self.np_random.random() < min(1.0, effective_p):
                             new_fires.add((nr, nc))
@@ -697,7 +712,8 @@ class ForestFireEnv(gym.Env):
 
                         dist = np.hypot(dr, dc)
                         base_probability = self.p_spread * (1.0 + 0.05 * self.burn_rate[r, c]) * moisture_factor * wind_mod
-                        effective_p = base_probability * (1.0 / dist)
+                        fuel_fraction = self.fuel[nr, nc] / self.max_fuel
+                        effective_p = base_probability * (1.0 / dist) * fuel_fraction
 
                         if self.np_random.random() < min(1.0, effective_p):
                             new_fires.add((nr, nc))
@@ -707,6 +723,12 @@ class ForestFireEnv(gym.Env):
             if self.grid[r, c] == CellState.HEALTHY and self.moisture[r, c] < self.max_moisture:
                 self.grid[r, c] = CellState.BURNING
                 self.burn_rate[r, c] = self.base_burn_rate
+
+        interrupted_mask = (self.grid == CellState.BURNING) & (self.firebreak_progress > 0) & (self.firebreak_progress < self.max_construction_steps)
+        if np.any(interrupted_mask):
+            self.firebreak_progress[interrupted_mask] = 0
+            if self.active_project_cell is not None and interrupted_mask[self.active_project_cell]:
+                self.active_project_cell = None
 
     def _calculate_reward(
         self,
@@ -800,7 +822,6 @@ class ForestFireEnv(gym.Env):
                 self._dispatch_aircraft()
             elif spec.type == ActionType.FIREBREAK:
                 self._apply_firebreak(spec)
-                self.firebreak_capacity -= 1
             elif spec.type == ActionType.FIRE_TRUCK:
                 self._apply_fire_truck(spec)
                 self._dispatch_fire_truck()

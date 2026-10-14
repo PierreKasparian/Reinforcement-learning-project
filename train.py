@@ -26,7 +26,7 @@ def main():
     
     # Dict sizes mapped straight from observation space definition
     num_spatial = 5 
-    num_global = 6  
+    num_global = 5 
     
     if args.algo == 'rainbow':
         agent = RainbowAgent(action_size, args.grid_size, num_spatial, num_global)
