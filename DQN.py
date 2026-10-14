@@ -21,11 +21,11 @@ class DQNAgent:
         self.gamma = 0.99
         self.epsilon = 1.0
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.9985  # Reaches 0.05 around episode 2000
+        self.epsilon_decay = 0.9995
         
         # DQN stability parameters
-        self.warmup_steps = 5000
-        self.train_freq = 4
+        self.warmup_steps = 2000
+        self.train_freq = 2
         self.target_update_steps = 1000
         self.total_steps = 0
         
