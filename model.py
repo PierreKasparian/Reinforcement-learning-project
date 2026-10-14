@@ -4,16 +4,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class WildfireCNNQNetwork(nn.Module):
-    def __init__(self, action_size, grid_size=30, num_spatial=5, num_global=6):
+    def __init__(self, action_size, grid_size=15, num_spatial=5, num_global=6):
         super().__init__()
         self.grid_size = grid_size
+        self.action_size = action_size
         
         # Spatial Feature Extractor
         self.conv1 = nn.Conv2d(num_spatial, 32, kernel_size=3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
         
-        # Correct math for PyTorch Conv2d with stride=2, pad=1, kernel=3
         conv_out_size = (grid_size + 1) // 2 
         self.flat_size = 64 * conv_out_size * conv_out_size
         
@@ -23,48 +23,46 @@ class WildfireCNNQNetwork(nn.Module):
         # Shared fully connected layer fusing spatial and global
         self.fc_shared = nn.Linear(self.flat_size + 64, 512)
         
-        # Branching Heads
+        # Factorized Action Heads
         self.head_type = nn.Linear(512, 4)  # NOOP, WATER_DROP, FIREBREAK, TRUCK
         self.head_ori = nn.Linear(512, 2)   # HORIZONTAL, VERTICAL
-        self.head_row = nn.Linear(512, grid_size)
-        self.head_col = nn.Linear(512, grid_size)
+        # Separate spatial (row, col) heads for water/truck (targets fire) vs firebreak (targets adjacent healthy)
+        self.head_row_wet = nn.Linear(512, grid_size)
+        self.head_col_wet = nn.Linear(512, grid_size)
+        self.head_row_fb = nn.Linear(512, grid_size)
+        self.head_col_fb = nn.Linear(512, grid_size)
 
     def forward(self, spatial, global_feats):
         batch_size = spatial.size(0)
         
-        # Process Spatial Image
         x = F.relu(self.conv1(spatial))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
         x = x.view(batch_size, -1)
         
-        # Process Global Vector
         g = F.relu(self.global_fc(global_feats))
+        fused = F.relu(self.fc_shared(torch.cat([x, g], dim=1)))
         
-        # Fuse
-        fused = torch.cat([x, g], dim=1)
-        fused = F.relu(self.fc_shared(fused))
-        
-        # Compute independent Q-values for each branch
         q_type = self.head_type(fused)
+        # Zero-center sub-branches so q_type controls the base Q-value of each tool
+        # and sub-branches only redistribute preference across orientations/cells
         q_ori = self.head_ori(fused)
-        q_row = self.head_row(fused)
-        q_col = self.head_col(fused)
+        q_ori = q_ori - q_ori.mean(dim=1, keepdim=True)
         
-        # Spatial Q-values combined -> Shape: (B, G, G)
-        q_sp = q_row.unsqueeze(2) + q_col.unsqueeze(1)
-        q_sp_flat = q_sp.view(batch_size, -1)
+        q_sp_wet = (self.head_row_wet(fused).unsqueeze(2) + self.head_col_wet(fused).unsqueeze(1)).view(batch_size, -1)
+        q_sp_wet = q_sp_wet - q_sp_wet.mean(dim=1, keepdim=True)
+        
+        q_sp_fb = (self.head_row_fb(fused).unsqueeze(2) + self.head_col_fb(fused).unsqueeze(1)).view(batch_size, -1)
+        q_sp_fb = q_sp_fb - q_sp_fb.mean(dim=1, keepdim=True)
         
         q_noop = q_type[:, 0:1]
-        q_wd_h = q_type[:, 1:2] + q_ori[:, 0:1] + q_sp_flat
-        q_wd_v = q_type[:, 1:2] + q_ori[:, 1:2] + q_sp_flat
-        q_fb_h = q_type[:, 2:3] + q_ori[:, 0:1] + q_sp_flat
-        q_fb_v = q_type[:, 2:3] + q_ori[:, 1:2] + q_sp_flat
-        q_ft   = q_type[:, 3:4] + q_sp_flat
+        q_wd_h = q_type[:, 1:2] + q_ori[:, 0:1] + q_sp_wet
+        q_wd_v = q_type[:, 1:2] + q_ori[:, 1:2] + q_sp_wet
+        q_fb_h = q_type[:, 2:3] + q_ori[:, 0:1] + q_sp_fb
+        q_fb_v = q_type[:, 2:3] + q_ori[:, 1:2] + q_sp_fb
+        q_ft   = q_type[:, 3:4] + q_sp_wet
         
-        q_flat = torch.cat([q_noop, q_wd_h, q_wd_v, q_fb_h, q_fb_v, q_ft], dim=1)
-        return q_flat
-
+        return torch.cat([q_noop, q_wd_h, q_wd_v, q_fb_h, q_fb_v, q_ft], dim=1)
 
 class NoisyLinear(nn.Module):
     def __init__(self, in_features, out_features, std_init=0.5):
