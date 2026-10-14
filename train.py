@@ -42,11 +42,11 @@ def main():
     os.makedirs("./plots", exist_ok=True)
 
     env = ForestFireEnv(grid_size=args.grid_size)
-    action_size = env.action_space.n
 
-    num_spatial = 5
-    num_global = 6
-
+    action_size = env.action_space.n 
+    num_spatial = 5 
+    num_global = 5 
+    
     if args.algo == 'rainbow':
         agent = RainbowAgent(action_size, args.grid_size, num_spatial, num_global)
     elif args.algo == 'ddqn':
