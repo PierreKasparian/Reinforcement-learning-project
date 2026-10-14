@@ -195,29 +195,28 @@ class ForestFireEnv(gym.Env):
         self,
         render_mode=None,
         grid_size=15,
-        p_spread=0.05,
+        p_spread=0.032,
         max_steps=300,
         max_fuel=100.0,
         max_moisture=100.0,
         base_burn_rate=2.0,
-        burn_growth_rate=0.30,
+        burn_growth_rate=0.20,
         max_burn_rate=25.0,
         wind_speed=1.0,
         wind_factor=0.05,
-        rain_intensity=6.0,
+        rain_intensity=5.0,
         rain_prob=0.1,
-        budget_replenish_rate=0.6,
-        water_drop_cooldown=5,
+        budget_replenish_rate=1.5,
+        water_drop_cooldown=4,
         cooldown_counter=0,
-        aircraft_turnaround_steps=4,
+        aircraft_turnaround_steps=3,
         num_fire_trucks=2,
-        truck_turnaround_steps=3,
-        # Base resources for a 15x15 grid
-        max_water_drops=10,
-        max_budget=120,
+        truck_turnaround_steps=2,
+        max_water_drops=12,
+        max_budget=150,
         action_costs=None,
-        water_drop_amount=45.0,
-        truck_amount=30.0,
+        water_drop_amount=48.0,
+        truck_amount=35.0,
         dry_rate=0.2,
         reward_weights=None,
         **kwargs
@@ -236,6 +235,9 @@ class ForestFireEnv(gym.Env):
         self.max_budget = int(max_budget * area_ratio)
 
         self.line_half_length = max(1, self.grid_size // 12)
+
+        self.min_initial_fires = 4
+        self.max_initial_fires = 5
 
         # Continuous state parameters
         self.max_fuel = max_fuel
@@ -258,7 +260,7 @@ class ForestFireEnv(gym.Env):
         self._watered_this_step = np.zeros((self.grid_size, self.grid_size), dtype=bool)
 
         # Suppression resources
-        self.active_project_spec = None  # Tracks (r, c, orientation) of ongoing firebreak
+        self.active_project_spec = None
         self.action_costs = dict(ACTION_COSTS if action_costs is None else action_costs)
         self.water_drop_amount = water_drop_amount
         self.truck_amount = truck_amount
@@ -306,7 +308,6 @@ class ForestFireEnv(gym.Env):
 
         self.grid = np.full((self.grid_size, self.grid_size), CellState.HEALTHY, dtype=np.int32)
         self.fuel = np.full((self.grid_size, self.grid_size), self.max_fuel, dtype=np.float32)
-        self.initial_total_fuel = float(np.sum(self.fuel, dtype=np.float64))
         self.moisture = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
         self.burn_rate = np.zeros((self.grid_size, self.grid_size), dtype=np.float32)
         self._watered_this_step = np.zeros((self.grid_size, self.grid_size), dtype=bool)
@@ -321,7 +322,7 @@ class ForestFireEnv(gym.Env):
             self.wind.is_active = False
             self.wind.current_speed = 0.0
 
-        # Initialize rain
+        # Initialize rain (keep rain off during pre-burn so it doesn't extinguish the initial seed)
         self.rain = Rain(
             grid_size=self.grid_size,
             max_intensity=self.rain_intensity,
@@ -345,21 +346,23 @@ class ForestFireEnv(gym.Env):
         center = self.grid_size // 2
         spawn_radius = max(1, self.grid_size // 6)
 
-        r = self.np_random.integers(center - spawn_radius, center + spawn_radius + 1)
-        c = self.np_random.integers(center - spawn_radius, center + spawn_radius + 1)
+        r = int(self.np_random.integers(center - spawn_radius, center + spawn_radius + 1))
+        c = int(self.np_random.integers(center - spawn_radius, center + spawn_radius + 1))
 
-        self.grid[r, c] = CellState.BURNING
-        self.burn_rate[r, c] = self.base_burn_rate
+        # Spawn a 3-cell L-shaped cluster (spans 2 rows and 2 columns).
+        # No 1D horizontal/vertical WATER_DROP or single-cell FIRE_TRUCK can hit all 3 cells on Step 1.
+        dr = int(self.np_random.choice([-1, 1]))
+        dc = int(self.np_random.choice([-1, 1]))
+        core_cells = [
+            (r, c),
+            (int(np.clip(r + dr, 0, self.grid_size - 1)), c),
+            (r, int(np.clip(c + dc, 0, self.grid_size - 1))),
+        ]
+        for cr, cc in core_cells:
+            self.grid[cr, cc] = CellState.BURNING
+            self.burn_rate[cr, cc] = self.base_burn_rate
 
-        # Keep initial pre-burn manageable (1 to 3 steps on 15x15) so fire starts at 1-4 cells
-        min_burn_steps = 1
-        max_burn_steps = max(3, self.grid_size // 4)
-        initial_burn_steps = self.np_random.integers(min_burn_steps, max_burn_steps + 1)
-
-        for _ in range(initial_burn_steps):
-            self._update_environmental_factors()
-            self._apply_drying()
-            self._spread_fire()
+        self.initial_total_fuel = float(np.sum(self.fuel, dtype=np.float64))
 
         return self._get_obs(), self._get_info()
 
@@ -407,9 +410,8 @@ class ForestFireEnv(gym.Env):
         self._watered_this_step[r, c] = True
 
         if self.grid[r, c] == CellState.BURNING:
-            # Stronger direct knockdown so water drops & trucks outpace logistic burn growth
-            suppression = amount * 0.2
-            self.burn_rate[r, c] = max(0.5, self.burn_rate[r, c] - suppression)
+            suppression = amount * 0.18
+            self.burn_rate[r, c] = max(1.0, self.burn_rate[r, c] - suppression)
 
         if self.moisture[r, c] >= self.max_moisture:
             self.grid[r, c] = CellState.WET
@@ -464,8 +466,11 @@ class ForestFireEnv(gym.Env):
     # ------- Actions -------
 
     def _action_cost(self, spec: ActionSpec) -> int:
-        if spec.type == ActionType.FIREBREAK and self.active_project_spec is not None:
-            # Continuing an already-paid firebreak project costs 0 extra budget
+        if (
+            spec.type == ActionType.FIREBREAK
+            and self.active_project_spec is not None
+            and (spec.r, spec.c, spec.orientation) == self.active_project_spec
+        ):
             return 0
         return self.action_costs[spec.type]
 
@@ -483,10 +488,6 @@ class ForestFireEnv(gym.Env):
             return any(self.grid[r, c] in (CellState.HEALTHY, CellState.BURNING) for r, c in cells)
 
         if spec.type == ActionType.FIREBREAK:
-            if self.active_project_spec is not None:
-                if (spec.r, spec.c, spec.orientation) != self.active_project_spec:
-                    return False
-
             cells = line_cells(spec, self.grid_size, self.line_half_length)
             if any(self.grid[r, c] == CellState.BURNING for r, c in cells):
                 return False
@@ -517,9 +518,15 @@ class ForestFireEnv(gym.Env):
         self.add_moisture(spec.r, spec.c, self.truck_amount)
 
     def _apply_firebreak(self, spec: ActionSpec):
-        """Progressively clear vegetation along the target line over max_construction_steps."""
+        target_spec = (spec.r, spec.c, spec.orientation)
+        # If switching to a different project before finishing the previous one, clear unfinished progress
+        if self.active_project_spec is not None and self.active_project_spec != target_spec:
+            unfinished = (self.firebreak_progress > 0) & (self.firebreak_progress < self.max_construction_steps)
+            self.firebreak_progress[unfinished] = 0
+            self.fuel[unfinished] = self.max_fuel
+
         cells = line_cells(spec, self.grid_size, self.line_half_length)
-        self.active_project_spec = (spec.r, spec.c, spec.orientation)
+        self.active_project_spec = target_spec
         all_completed = True
 
         for r, c in cells:
@@ -546,7 +553,6 @@ class ForestFireEnv(gym.Env):
         spatial[0] = self.fuel / self.max_fuel
         spatial[1] = self.moisture / self.max_moisture
         spatial[2] = np.clip(self.burn_rate / self.max_burn_rate, 0.0, 1.0)
-        # Expose both in-progress (0.5) and completed (1.0) firebreaks in spatial[3]
         spatial[3] = self.firebreak_progress.astype(np.float32) / float(self.max_construction_steps)
         spatial[4] = (self.grid == CellState.WET).astype(np.float32)
 
@@ -654,7 +660,12 @@ class ForestFireEnv(gym.Env):
                             new_fires.add((nr, nc))
 
         for r, c in new_fires:
-            if self.grid[r, c] == CellState.HEALTHY and self.moisture[r, c] < self.max_moisture:
+            if (
+                self.grid[r, c] == CellState.HEALTHY
+                and not extinguished_mask[r, c]
+                and not self._watered_this_step[r, c]
+                and self.moisture[r, c] < self.max_moisture
+            ):
                 self.grid[r, c] = CellState.BURNING
                 self.burn_rate[r, c] = self.base_burn_rate
 
@@ -713,13 +724,14 @@ class ForestFireEnv(gym.Env):
                 terminated
                 and active_fires == 0
                 and self.failure_reason is None
-                and preserved_fraction >= 0.50
+                and preserved_fraction >= 0.40
             )
             if success:
                 components["terminal"] = w.success * preserved_fraction
                 outcome = "success"
             else:
-                components["terminal"] = -w.failure
+                burned_fraction = 1.0 - preserved_fraction
+                components["terminal"] = -w.failure * burned_fraction
                 outcome = self.failure_reason or (
                     "timeout" if truncated else "failure"
                 )
