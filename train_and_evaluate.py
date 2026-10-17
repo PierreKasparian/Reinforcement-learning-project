@@ -13,8 +13,7 @@ from forest_fire_env import ForestFireEnv, CellState
 from actions import ActionType, decode_action, line_cells
 from buffer import device
 
-# Report-ready visual styling (colorblind-safe Okabe-Ito inspired palette)
-ALGO_NAMES = ["dqn", "ddqn", "rainbow"]
+ALGO_ORDER = ["dqn", "ddqn", "rainbow"]
 ALGO_LABELS = {
     "dqn": "Pure DQN",
     "ddqn": "Pure DDQN",
@@ -39,17 +38,24 @@ plt.rcParams.update({
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Train and evaluate Pure DQN, Pure DDQN, and Rainbow DQN on Wildfire Env"
+        description="Train and evaluate one RL agent at a time (or combine saved runs into report plots)"
     )
-    parser.add_argument("--episodes", type=int, default=20000, help="Training episodes per agent")
-    parser.add_argument("--eval-episodes", type=int, default=200, help="Evaluation episodes per agent")
+    parser.add_argument(
+        "--algo",
+        type=str,
+        required=True,
+        choices=["dqn", "ddqn", "rainbow", "all", "plot-only"],
+        help="Run a single agent ('dqn', 'ddqn', 'rainbow'), 'all' sequentially, or 'plot-only' from saved CSVs",
+    )
+    parser.add_argument("--episodes", type=int, default=20000, help="Training episodes")
+    parser.add_argument("--eval-episodes", type=int, default=200, help="Evaluation episodes")
     parser.add_argument("--grid-size", type=int, default=15, help="Grid dimension GxG")
     parser.add_argument("--window", type=int, default=100, help="Rolling window for training curves")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed for reproducibility")
     parser.add_argument(
         "--skip-train",
         action="store_true",
-        help="Skip training and load existing checkpoints + training CSVs for evaluation/plotting",
+        help="Skip training for the selected --algo and only run greedy evaluation + plotting",
     )
     return parser.parse_args()
 
@@ -63,7 +69,7 @@ def set_global_seeds(seed: int):
 
 
 def rolling_stats(data, window=100):
-    """Compute rolling mean and rolling standard deviation for shaded confidence bands."""
+    """Compute rolling mean and rolling standard deviation for shaded bands."""
     arr = np.asarray(data, dtype=np.float64)
     means = np.empty_like(arr)
     stds = np.empty_like(arr)
@@ -73,6 +79,12 @@ def rolling_stats(data, window=100):
         means[i] = np.mean(segment)
         stds[i] = np.std(segment)
     return means, stds
+
+
+def clean_valid(values):
+    """Filter out NaNs when computing statistics on conditional metrics."""
+    arr = np.asarray(values, dtype=np.float64)
+    return arr[~np.isnan(arr)]
 
 
 def make_agent(algo: str, action_size: int, grid_size: int, num_spatial: int = 5, num_global: int = 6):
@@ -108,9 +120,8 @@ def select_greedy_action(agent, algo: str, state: dict, action_mask: np.ndarray)
 def check_spatial_precision(env: ForestFireEnv, spec) -> tuple[bool, bool]:
     """
     Evaluate whether an active intervention targeted the fire accurately:
-      - For WATER_DROP / FIRE_TRUCK: did it hit at least one actively BURNING cell (or immediate neighbor)?
-      - For FIREBREAK: was it placed within Chebyshev distance <= 2 of an actively BURNING cell?
-    Returns (is_water_or_truck_hit, is_firebreak_near_front).
+      - WATER_DROP / FIRE_TRUCK: did it hit at least one actively BURNING cell?
+      - FIREBREAK: was it placed within Chebyshev distance <= 2 of an actively BURNING cell?
     """
     burning_coords = np.argwhere(env.grid == CellState.BURNING)
     if len(burning_coords) == 0:
@@ -137,7 +148,7 @@ def check_spatial_precision(env: ForestFireEnv, spec) -> tuple[bool, bool]:
 
 
 def train_single_agent(algo: str, args) -> dict:
-    """Train one agent, save checkpoints & CSV, and return training history dict."""
+    """Train one agent, save checkpoints & training CSV, and return training history dict."""
     set_global_seeds(args.seed)
     env = ForestFireEnv(grid_size=args.grid_size)
     action_size = env.action_space.n
@@ -249,12 +260,10 @@ def train_single_agent(algo: str, args) -> dict:
         if (episode + 1) % save_freq == 0:
             agent.save_checkpoint(f"./checkpoints/{algo}_wildfire_ep{episode + 1}.pth")
 
-    # Save final trained model
     final_ckpt = f"./checkpoints/{algo}_wildfire_final.pth"
     agent.save_checkpoint(final_ckpt)
     env.close()
 
-    # Save training metrics to CSV
     csv_path = f"./results/train_{algo}_{args.grid_size}x{args.grid_size}.csv"
     keys = list(history.keys())
     with open(csv_path, mode="w", newline="") as f:
@@ -262,35 +271,19 @@ def train_single_agent(algo: str, args) -> dict:
         writer.writerow(["episode"] + keys)
         for i in range(args.episodes):
             writer.writerow([i + 1] + [history[k][i] for k in keys])
-    print(f"Saved {ALGO_LABELS[algo]} checkpoint to {final_ckpt} and logs to {csv_path}")
+    print(f"Saved {ALGO_LABELS[algo]} checkpoint to {final_ckpt} and training CSV to {csv_path}")
 
     return history
 
 
-def load_training_csv(algo: str, args) -> dict:
-    csv_path = f"./results/train_{algo}_{args.grid_size}x{args.grid_size}.csv"
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"Training CSV not found at {csv_path}. Run without --skip-train first.")
-    history = {}
-    with open(csv_path, mode="r", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            for k, v in row.items():
-                if k == "episode":
-                    continue
-                history.setdefault(k, []).append(float(v))
-    return history
-
-
-def evaluate_agent(algo: str, args) -> dict:
-    """Evaluate a trained agent greedily across fixed test seeds."""
+def evaluate_single_agent(algo: str, args) -> dict:
+    """Evaluate a trained agent greedily across fixed test seeds and save evaluation CSV."""
     env = ForestFireEnv(grid_size=args.grid_size)
     action_size = env.action_space.n
     agent = make_agent(algo, action_size, args.grid_size, num_spatial=5, num_global=6)
 
     final_ckpt = f"./checkpoints/{algo}_wildfire_final.pth"
     if not os.path.exists(final_ckpt):
-        # Fallback to highest episode checkpoint if final doesn't exist
         ckpts = sorted(
             [f for f in os.listdir("./checkpoints") if f.startswith(f"{algo}_wildfire_ep")],
             key=lambda x: int(x.split("ep")[1].split(".")[0]),
@@ -322,7 +315,7 @@ def evaluate_agent(algo: str, args) -> dict:
         "rew_terminal": [],
     }
 
-    eval_base_seed = args.seed + 500_000  # Distinct from all training seeds
+    eval_base_seed = args.seed + 500_000
 
     for ep in range(args.eval_episodes):
         state, _ = env.reset(seed=eval_base_seed + ep)
@@ -347,7 +340,6 @@ def evaluate_agent(algo: str, args) -> dict:
             spec = decode_action(action, args.grid_size)
             counts[spec.type] += 1
 
-            # Check spatial targeting precision before stepping the environment
             wt_hit, fb_near = check_spatial_precision(env, spec)
             if spec.type in (ActionType.WATER_DROP, ActionType.FIRE_TRUCK):
                 water_truck_attempts += 1
@@ -380,8 +372,7 @@ def evaluate_agent(algo: str, args) -> dict:
 
         eval_metrics["reward"].append(total_reward)
         eval_metrics["steps"].append(ep_steps)
-        if is_win:
-            eval_metrics["steps_on_success"].append(ep_steps)
+        eval_metrics["steps_on_success"].append(float(ep_steps) if is_win else float("nan"))
         eval_metrics["success"].append(100.0 if is_win else 0.0)
         eval_metrics["preserved_fuel_pct"].append(preserved_pct)
         eval_metrics["burnt_area_pct"].append(burnt_pct)
@@ -392,10 +383,10 @@ def evaluate_agent(algo: str, args) -> dict:
         eval_metrics["firebreak_pct"].append((counts[ActionType.FIREBREAK] / max(1, ep_steps)) * 100.0)
         eval_metrics["fire_truck_pct"].append((counts[ActionType.FIRE_TRUCK] / max(1, ep_steps)) * 100.0)
 
-        if water_truck_attempts > 0:
-            eval_metrics["water_truck_hit_rate"].append((water_truck_hits / water_truck_attempts) * 100.0)
-        if fb_attempts > 0:
-            eval_metrics["firebreak_near_front_rate"].append((fb_near_front / fb_attempts) * 100.0)
+        wt_rate = (water_truck_hits / water_truck_attempts) * 100.0 if water_truck_attempts > 0 else float("nan")
+        fb_rate = (fb_near_front / fb_attempts) * 100.0 if fb_attempts > 0 else float("nan")
+        eval_metrics["water_truck_hit_rate"].append(wt_rate)
+        eval_metrics["firebreak_near_front_rate"].append(fb_rate)
 
         eval_metrics["rew_fire_damage"].append(ep_dmg)
         eval_metrics["rew_action_cost"].append(ep_cost)
@@ -403,7 +394,44 @@ def evaluate_agent(algo: str, args) -> dict:
         eval_metrics["rew_terminal"].append(ep_term)
 
     env.close()
+
+    # Save per-episode evaluation metrics to CSV so results persist across separate runs
+    eval_csv_path = f"./results/eval_{algo}_{args.grid_size}x{args.grid_size}.csv"
+    keys = list(eval_metrics.keys())
+    with open(eval_csv_path, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["eval_episode"] + keys)
+        for i in range(args.eval_episodes):
+            writer.writerow([i + 1] + [eval_metrics[k][i] for k in keys])
+    print(f"Saved {ALGO_LABELS[algo]} evaluation CSV to {eval_csv_path}")
+
     return eval_metrics
+
+
+def load_csv_dict(csv_path: str, index_col: str) -> dict:
+    data = {}
+    with open(csv_path, mode="r", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            for k, v in row.items():
+                if k == index_col:
+                    continue
+                data.setdefault(k, []).append(float(v))
+    return data
+
+
+def load_available_results(args) -> tuple[dict, dict]:
+    """Scan ./results/ and load all completed training and evaluation CSVs."""
+    all_train = {}
+    all_eval = {}
+    for algo in ALGO_ORDER:
+        t_path = f"./results/train_{algo}_{args.grid_size}x{args.grid_size}.csv"
+        e_path = f"./results/eval_{algo}_{args.grid_size}x{args.grid_size}.csv"
+        if os.path.exists(t_path):
+            all_train[algo] = load_csv_dict(t_path, index_col="episode")
+        if os.path.exists(e_path):
+            all_eval[algo] = load_csv_dict(e_path, index_col="eval_episode")
+    return all_train, all_eval
 
 
 # =====================================================================
@@ -411,9 +439,12 @@ def evaluate_agent(algo: str, args) -> dict:
 # =====================================================================
 
 def plot_training_curve(all_train: dict, key: str, ylabel: str, title: str, filename: str, window: int, ylim=None):
-    """Generate a clean, single-panel training progression plot with shaded +-0.5 SD bands."""
+    if not all_train:
+        return
     fig, ax = plt.subplots(figsize=(7.5, 4.5))
-    for algo in ALGO_NAMES:
+    for algo in ALGO_ORDER:
+        if algo not in all_train:
+            continue
         data = all_train[algo][key]
         episodes_x = np.arange(1, len(data) + 1)
         means, stds = rolling_stats(data, window=window)
@@ -439,9 +470,15 @@ def plot_training_curve(all_train: dict, key: str, ylabel: str, title: str, file
 
 
 def plot_training_action_evolution(all_train: dict, window: int):
-    """1x3 horizontal comparison of how tool selection evolves over training for each agent."""
-    fig, axes = plt.subplots(1, 3, figsize=(13.5, 4.2), sharey=True)
-    for idx, algo in enumerate(ALGO_NAMES):
+    avail = [a for a in ALGO_ORDER if a in all_train]
+    if not avail:
+        return
+    n = len(avail)
+    fig, axes = plt.subplots(1, n, figsize=(4.6 * n, 4.2), sharey=True)
+    if n == 1:
+        axes = [axes]
+
+    for idx, algo in enumerate(avail):
         ax = axes[idx]
         tr = all_train[algo]
         episodes_x = np.arange(1, len(tr["reward"]) + 1)
@@ -466,7 +503,7 @@ def plot_training_action_evolution(all_train: dict, window: int):
         ax.grid(True, linestyle="--", alpha=0.25)
         if idx == 0:
             ax.set_ylabel(f"Action Share ({window}-Ep Rolling %)")
-        if idx == 2:
+        if idx == n - 1:
             ax.legend(loc="upper right", frameon=True)
 
     fig.suptitle("Evolution of Action Selection During Training", fontweight="bold", y=1.02)
@@ -476,7 +513,9 @@ def plot_training_action_evolution(all_train: dict, window: int):
 
 
 def plot_eval_outcome_bars(all_eval: dict):
-    """Grouped bar chart of core evaluation percentages: Success Rate, Preserved Fuel, and Burnt Area."""
+    avail = [a for a in ALGO_ORDER if a in all_eval]
+    if not avail:
+        return
     metrics = ["success", "preserved_fuel_pct", "burnt_area_pct"]
     metric_labels = ["Containment Success (%)", "Preserved Fuel (%)", "Burnt Area (%)"]
 
@@ -484,11 +523,10 @@ def plot_eval_outcome_bars(all_eval: dict):
     width = 0.25
 
     fig, ax = plt.subplots(figsize=(7.5, 4.6))
-    for i, algo in enumerate(ALGO_NAMES):
+    for i, algo in enumerate(avail):
         means = [np.mean(all_eval[algo][m]) for m in metrics]
-        # 95% confidence interval: 1.96 * SE
         cis = [1.96 * np.std(all_eval[algo][m]) / np.sqrt(len(all_eval[algo][m])) for m in metrics]
-        offset = (i - 1) * width
+        offset = (i - (len(avail) - 1) / 2.0) * width
         bars = ax.bar(
             x + offset,
             means,
@@ -526,27 +564,29 @@ def plot_eval_outcome_bars(all_eval: dict):
 
 
 def plot_eval_fuel_distribution(all_eval: dict):
-    """Boxplot + jittered strip plot of Preserved Fuel (%) across evaluation episodes."""
+    avail = [a for a in ALGO_ORDER if a in all_eval]
+    if not avail:
+        return
     fig, ax = plt.subplots(figsize=(7.0, 4.5))
-    data = [all_eval[algo]["preserved_fuel_pct"] for algo in ALGO_NAMES]
-    labels = [ALGO_LABELS[algo] for algo in ALGO_NAMES]
+    positions = list(range(1, len(avail) + 1))
+    data = [all_eval[algo]["preserved_fuel_pct"] for algo in avail]
+    labels = [ALGO_LABELS[algo] for algo in avail]
 
     bp = ax.boxplot(
         data,
-        positions=[1, 2, 3],
+        positions=positions,
         widths=0.45,
         patch_artist=True,
         showmeans=True,
         meanprops={"marker": "D", "markerfacecolor": "white", "markeredgecolor": "black"},
         medianprops={"color": "black", "linewidth": 2.0},
     )
-    for patch, algo in zip(bp["boxes"], ALGO_NAMES):
+    for patch, algo in zip(bp["boxes"], avail):
         patch.set_facecolor(ALGO_COLORS[algo])
         patch.set_alpha(0.65)
 
-    # Overlay individual episode points with slight horizontal jitter
     rng = np.random.default_rng(42)
-    for i, algo in enumerate(ALGO_NAMES, start=1):
+    for i, algo in zip(positions, avail):
         pts = all_eval[algo]["preserved_fuel_pct"]
         jitter = rng.uniform(-0.12, 0.12, size=len(pts))
         ax.scatter(
@@ -560,7 +600,7 @@ def plot_eval_fuel_distribution(all_eval: dict):
         )
 
     ax.axhline(40.0, color="crimson", linestyle="--", linewidth=1.2, label="Success Threshold (40% Fuel)")
-    ax.set_xticks([1, 2, 3])
+    ax.set_xticks(positions)
     ax.set_xticklabels(labels, fontweight="bold")
     ax.set_ylabel("Preserved Forest Fuel (%)")
     ax.set_ylim(-3, 105)
@@ -573,41 +613,42 @@ def plot_eval_fuel_distribution(all_eval: dict):
 
 
 def plot_eval_tactical_precision(all_eval: dict):
-    """Side-by-side comparison of Action Share and Spatial Targeting Precision during Evaluation."""
+    avail = [a for a in ALGO_ORDER if a in all_eval]
+    if not avail:
+        return
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.0, 4.4))
 
-    # Left subplot: Action Mix during Greedy Evaluation
     action_keys = ["noop_pct", "water_drop_pct", "firebreak_pct", "fire_truck_pct"]
     action_names = ["NOOP", "Water Drop", "Firebreak", "Fire Truck"]
     action_colors = ["#9e9e9e", "#1f77b4", "#ff7f0e", "#d62728"]
 
-    x = np.arange(len(ALGO_NAMES))
-    bottoms = np.zeros(len(ALGO_NAMES))
+    x = np.arange(len(avail))
+    bottoms = np.zeros(len(avail))
     for k, name, col in zip(action_keys, action_names, action_colors):
-        vals = np.array([np.mean(all_eval[algo][k]) for algo in ALGO_NAMES])
+        vals = np.array([np.mean(all_eval[algo][k]) for algo in avail])
         ax1.bar(x, vals, width=0.5, bottom=bottoms, label=name, color=col, edgecolor="black", linewidth=0.5)
         bottoms += vals
 
     ax1.set_xticks(x)
-    ax1.set_xticklabels([ALGO_LABELS[a] for a in ALGO_NAMES], fontweight="bold")
+    ax1.set_xticklabels([ALGO_LABELS[a] for a in avail], fontweight="bold")
     ax1.set_ylabel("Mean Action Share (%)")
     ax1.set_ylim(0, 100)
     ax1.set_title("Evaluation Action Distribution", fontweight="bold")
     ax1.legend(loc="upper right", frameon=True)
     ax1.grid(True, axis="y", linestyle="--", alpha=0.3)
 
-    # Right subplot: Spatial Targeting Accuracy
     prec_metrics = ["water_truck_hit_rate", "firebreak_near_front_rate"]
     prec_labels = ["Water/Truck Direct\nFire Hit Rate (%)", "Firebreak Placed\nNear Fire Front (%)"]
     px = np.arange(len(prec_metrics))
     width = 0.25
 
-    for i, algo in enumerate(ALGO_NAMES):
-        means = [
-            np.mean(all_eval[algo][m]) if len(all_eval[algo][m]) > 0 else 0.0
-            for m in prec_metrics
-        ]
-        offset = (i - 1) * width
+    for i, algo in enumerate(avail):
+        means = []
+        for m in prec_metrics:
+            valid = clean_valid(all_eval[algo][m])
+            means.append(np.mean(valid) if len(valid) > 0 else 0.0)
+
+        offset = (i - (len(avail) - 1) / 2.0) * width
         bars = ax2.bar(
             px + offset,
             means,
@@ -643,14 +684,16 @@ def plot_eval_tactical_precision(all_eval: dict):
 
 
 def export_summary_table(all_eval: dict, args):
-    """Export a publication-ready CSV and Markdown summary table of all evaluation metrics."""
+    avail = [a for a in ALGO_ORDER if a in all_eval]
+    if not avail:
+        return
     rows = []
-    for algo in ALGO_NAMES:
+    for algo in avail:
         ev = all_eval[algo]
-        win_steps = ev["steps_on_success"]
+        win_steps = clean_valid(ev["steps_on_success"])
         win_steps_str = f"{np.mean(win_steps):.1f} ± {np.std(win_steps):.1f}" if len(win_steps) > 0 else "N/A"
-        wt_hit = ev["water_truck_hit_rate"]
-        fb_near = ev["firebreak_near_front_rate"]
+        wt_hit = clean_valid(ev["water_truck_hit_rate"])
+        fb_near = clean_valid(ev["firebreak_near_front_rate"])
 
         rows.append({
             "Algorithm": ALGO_LABELS[algo],
@@ -679,7 +722,8 @@ def export_summary_table(all_eval: dict, args):
         for r in rows:
             f.write("| " + " | ".join(r[h] for h in headers) + " |\n")
 
-    print(f"\nExported evaluation summary tables to:\n  - {csv_out}\n  - {md_out}\n")
+    print(f"\nUpdated evaluation summary tables ({', '.join(a.upper() for a in avail)}):")
+    print(f"  - {csv_out}\n  - {md_out}\n")
     with open(md_out, "r") as f:
         print(f.read())
 
@@ -690,16 +734,21 @@ def main():
     os.makedirs("./results", exist_ok=True)
     os.makedirs("./report_figures", exist_ok=True)
 
-    # 1. Train or load training histories for all 3 algorithms
-    all_train = {}
-    for algo in ALGO_NAMES:
-        if args.skip_train:
-            all_train[algo] = load_training_csv(algo, args)
-        else:
-            all_train[algo] = train_single_agent(algo, args)
+    # 1. Run training & evaluation for the selected algorithm(s)
+    if args.algo != "plot-only":
+        target_algos = ALGO_ORDER if args.algo == "all" else [args.algo]
+        for algo in target_algos:
+            if not args.skip_train:
+                train_single_agent(algo, args)
+            evaluate_single_agent(algo, args)
 
-    # 2. Generate standalone report figures for the Training Phase
-    print("\nGenerating standalone training figures...")
+    # 2. Load all completed CSVs in ./results/ and generate/update report figures
+    all_train, all_eval = load_available_results(args)
+    completed_train = [ALGO_LABELS[a] for a in ALGO_ORDER if a in all_train]
+    completed_eval = [ALGO_LABELS[a] for a in ALGO_ORDER if a in all_eval]
+    print(f"\nGenerating report figures for available training runs: {completed_train}")
+    print(f"Generating report figures for available evaluation runs: {completed_eval}")
+
     plot_training_curve(
         all_train,
         key="reward",
@@ -728,21 +777,12 @@ def main():
     )
     plot_training_action_evolution(all_train, window=args.window)
 
-    # 3. Run deterministic Greedy Evaluation across paired seeds
-    print("\nRunning deterministic greedy evaluation across all agents...")
-    all_eval = {}
-    for algo in ALGO_NAMES:
-        all_eval[algo] = evaluate_agent(algo, args)
-
-    # 4. Generate standalone report figures for the Evaluation Phase
-    print("Generating standalone evaluation figures...")
     plot_eval_outcome_bars(all_eval)
     plot_eval_fuel_distribution(all_eval)
     plot_eval_tactical_precision(all_eval)
-
-    # 5. Export summary tables
     export_summary_table(all_eval, args)
-    print("All report figures saved to ./report_figures/")
+
+    print("Saved updated figures to ./report_figures/")
 
 
 if __name__ == "__main__":
