@@ -20,7 +20,7 @@ python train_and_evaluate.py --algo rainbow --episodes 20000
 Command-line Options:
 
 ```bash
---algo: Choose from dqn, ddqn, rainbow, or all (runs each agent sequentially).--episodes: Number of training episodes per algorithm (default: 20000).--eval-only: Skip training and evaluate existing saved agent checkpoints.
+--algo: Choose from dqn, ddqn, rainbow, or all (runs each agent sequentially).--episodes: Number of training episodes per algorithm (default: 20000).--skip-train: Skip training and evaluate existing saved agent checkpoints.
 ```
 
  3. **Standalone Training:** To train a single agent directly and save diagnostic plots and models:
