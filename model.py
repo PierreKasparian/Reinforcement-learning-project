@@ -1,3 +1,10 @@
+"""
+Axel Bechtel
+Jesper Wentzell
+Pieree Kasparian
+Ahmet Alper Basturk
+"""
+
 import math
 import torch
 import torch.nn as nn
@@ -9,7 +16,7 @@ class WildfireCNNQNetwork(nn.Module):
         self.grid_size = grid_size
         self.action_size = action_size
         
-        # Spatial Feature Extractor
+        # Spatial Feature Extractor (CNN layers over grid observation channels)
         self.conv1 = nn.Conv2d(num_spatial, 32, kernel_size=3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1)
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
@@ -20,10 +27,10 @@ class WildfireCNNQNetwork(nn.Module):
         # Global Feature Extractor
         self.global_fc = nn.Linear(num_global, 64)
         
-        # Shared fully connected layer fusing spatial and global
+        # Shared fully connected layer fusing spatial and global embeddings
         self.fc_shared = nn.Linear(self.flat_size + 64, 512)
         
-        # Factorized Action Heads
+        # Factorized Action Heads decomposing the large discrete action space
         self.head_type = nn.Linear(512, 4)  # NOOP, WATER_DROP, FIREBREAK, TRUCK
         self.head_ori = nn.Linear(512, 2)   # HORIZONTAL, VERTICAL
         # Separate spatial (row, col) heads for water/truck (targets fire) vs firebreak (targets adjacent healthy)
@@ -44,17 +51,18 @@ class WildfireCNNQNetwork(nn.Module):
         fused = F.relu(self.fc_shared(torch.cat([x, g], dim=1)))
         
         q_type = self.head_type(fused)
-        # Zero-center sub-branches so q_type controls the base Q-value of each tool
-        # and sub-branches only redistribute preference across orientations/cells
+        # Zero-center sub-branches so q_type controls base tool value and sub-branches redistribute preference
         q_ori = self.head_ori(fused)
         q_ori = q_ori - q_ori.mean(dim=1, keepdim=True)
-        
+
+        # Outer sum of row and column linear outputs forms the 2D spatial Q-map preference matrix
         q_sp_wet = (self.head_row_wet(fused).unsqueeze(2) + self.head_col_wet(fused).unsqueeze(1)).view(batch_size, -1)
         q_sp_wet = q_sp_wet - q_sp_wet.mean(dim=1, keepdim=True)
         
         q_sp_fb = (self.head_row_fb(fused).unsqueeze(2) + self.head_col_fb(fused).unsqueeze(1)).view(batch_size, -1)
         q_sp_fb = q_sp_fb - q_sp_fb.mean(dim=1, keepdim=True)
-        
+
+        # Reconstruct flat action Q-values across all tool variants and grid cells
         q_noop = q_type[:, 0:1]
         q_wd_h = q_type[:, 1:2] + q_ori[:, 0:1] + q_sp_wet
         q_wd_v = q_type[:, 1:2] + q_ori[:, 1:2] + q_sp_wet
@@ -65,6 +73,7 @@ class WildfireCNNQNetwork(nn.Module):
         return torch.cat([q_noop, q_wd_h, q_wd_v, q_fb_h, q_fb_v, q_ft], dim=1)
 
 class NoisyLinear(nn.Module):
+    """Noisy Linear layer introducing parametrized Gaussian noise for exploration in Rainbow DQN."""
     def __init__(self, in_features, out_features, std_init=0.5):
         super(NoisyLinear, self).__init__()
         self.in_features = in_features
@@ -124,11 +133,11 @@ class RainbowCNNQNetwork(nn.Module):
         
         self.global_fc = nn.Linear(num_global, 64)
         
-        # Value Stream
+        # Distributional Value Stream (C51)
         self.value_hidden = NoisyLinear(self.flat_size + 64, 512)
         self.value_out = NoisyLinear(512, num_atoms)
         
-        # Advantage Stream (Branched)
+        # Distributional Advantage Stream (Branched & Factorized across atoms)
         self.adv_hidden = NoisyLinear(self.flat_size + 64, 512)
         self.adv_type = NoisyLinear(512, 4 * num_atoms)
         self.adv_ori = NoisyLinear(512, 2 * num_atoms)
@@ -146,11 +155,11 @@ class RainbowCNNQNetwork(nn.Module):
         g = F.relu(self.global_fc(global_feats))
         fused = torch.cat([x, g], dim=1)
         
-        # Value computation
+        # Value distribution computation
         v = F.relu(self.value_hidden(fused))
         v = self.value_out(v).view(batch_size, 1, self.num_atoms)
         
-        # Branched Advantage computations
+        # Branched Advantage distribution computations
         a_hidden = F.relu(self.adv_hidden(fused))
         a_type = self.adv_type(a_hidden).view(batch_size, 4, self.num_atoms)
         a_ori = self.adv_ori(a_hidden).view(batch_size, 2, self.num_atoms)
@@ -168,6 +177,8 @@ class RainbowCNNQNetwork(nn.Module):
         a_ft   = a_type[:, 3:4, :] + a_sp_flat
         
         a_flat = torch.cat([a_noop, a_wd_h, a_wd_v, a_fb_h, a_fb_v, a_ft], dim=1)
+
+        # Dueling combination: Q(s,a) = V(s) + (A(s,a) - mean_a A(s,a))
         q = v + a_flat - a_flat.mean(dim=1, keepdim=True)
         return F.softmax(q, dim=-1)
         
