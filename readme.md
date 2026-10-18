@@ -43,18 +43,18 @@ python env_sim.py
 ```
 
 ## Script Descriptions:
-```actions.py```: Defines discrete action types, orientations, action costs, and factorized action space mappings for the grid.
-```buffer.py```: Implements uniform replay buffers and prioritized experience replay (PER) with $n$-step transition buffers.
-```DQN.py```: Implements the standard Deep Q-Network agent with $\epsilon$-greedy exploration and target network updating.
-```DDQN.py```: Implements the Double Deep Q-Network agent to decouple action selection from evaluation and mitigate maximization bias.
-```rainbow.py```: Implements the full Rainbow DQN agent incorporating Categorical (C51) Distributional RL, Multi-Step Returns, Prioritized Experience Replay, and Noisy Networks.
-```model.py```: Constructs the shared convolutional feature extractor and factorized spatial Q-network/distributional heads.
-```forest_fire_env.py```: Implements the wildfire environment, simulating cellular automata fire dynamics, wind vector fields, and rain events.
-```render.py```: Manages Pygame visualization routines for rendering grid states, active suppression zones, and weather overlays.
-```train.py```: Manages single-agent training loops, checkpoint saves, and metric logging.
-```train_and_evaluate.py```: Controls the complete multi-agent training pipeline, evaluation on fixed seeds, and benchmark summary generation.
-```agent_sim.py```: Executes visual playback simulations using saved neural network checkpoints.
-```env_sim.py```: Runs an interactive manual simulation of the environment.
+* ```actions.py```: Defines discrete action types, orientations, action costs, and factorized action space mappings for the grid.
+* ```buffer.py```: Implements uniform replay buffers and prioritized experience replay (PER) with $n$-step transition buffers.
+* ```DQN.py```: Implements the standard Deep Q-Network agent with $\epsilon$-greedy exploration and target network updating.
+* ```DDQN.py```: Implements the Double Deep Q-Network agent to decouple action selection from evaluation and mitigate maximization bias.
+* ```rainbow.py```: Implements the full Rainbow DQN agent incorporating Categorical (C51) Distributional RL, Multi-Step Returns, Prioritized Experience Replay, and Noisy Networks.
+* ```model.py```: Constructs the shared convolutional feature extractor and factorized spatial Q-network/distributional heads.
+* ```forest_fire_env.py```: Implements the wildfire environment, simulating cellular automata fire dynamics, wind vector fields, and rain events.
+* ```render.py```: Manages Pygame visualization routines for rendering grid states, active suppression zones, and weather overlays.
+* ```train.py```: Manages single-agent training loops, checkpoint saves, and metric logging.
+* ```train_and_evaluate.py```: Controls the complete multi-agent training pipeline, evaluation on fixed seeds, and benchmark summary generation.
+* ```agent_sim.py```: Executes visual playback simulations using saved neural network checkpoints.
+* ```env_sim.py```: Runs an interactive manual simulation of the environment.
 
 ### Authors
 
