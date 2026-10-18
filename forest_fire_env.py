@@ -702,7 +702,6 @@ class ForestFireEnv(gym.Env):
         fuel_before_action,
         fuel_before_spread,
         budget_before,
-        fires_before,
         active_fires,
         terminated,
         truncated,
@@ -764,7 +763,6 @@ class ForestFireEnv(gym.Env):
 
         budget_before = self.budget_remaining
         fuel_before_action = float(np.sum(self.fuel, dtype=np.float64))
-        fires_before = int(np.sum(self.grid == CellState.BURNING))
         burn_rate_before_action = float(np.sum(self.burn_rate, dtype=np.float64))
 
         self.budget_remaining = min(
@@ -817,7 +815,6 @@ class ForestFireEnv(gym.Env):
             fuel_before_action=fuel_before_action,
             fuel_before_spread=fuel_before_spread,
             budget_before=budget_before,
-            fires_before=fires_before,
             active_fires=active_fires,
             terminated=terminated,
             truncated=truncated,
