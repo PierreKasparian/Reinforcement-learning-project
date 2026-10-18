@@ -1,3 +1,10 @@
+"""
+Axel Bechtel
+Jesper Wentzell
+Pieree Kasparian
+Ahmet Alper Basturk
+"""
+
 import enum
 from dataclasses import dataclass
 from typing import Optional
@@ -50,7 +57,6 @@ class ActionSpec:
 
 def n_actions(grid_size: int) -> int:
     """Total action count: 1 NOOP + 5 blocks of grid_size^2 targets.
-
     Blocks: water drop (H/V), firebreak (H/V) and fire truck (single cell).
     """
     return 1 + 5 * grid_size * grid_size
@@ -112,7 +118,7 @@ def encode_action(spec: ActionSpec, grid_size: int) -> int:
 
 
 def line_cells(spec: ActionSpec, grid_size: int, half_length: int = 2) -> list[tuple[int, int]]:
-    """Return the target line cells (anchor +/- half_length), clipped to the grid."""
+    """Determines spatial coordinate bounds along a targeted horizontal or vertical line (anchor +/- half_length)."""
     if spec.r is None or spec.c is None:
         raise ValueError("action requires a target cell")
     if spec.orientation is None:
