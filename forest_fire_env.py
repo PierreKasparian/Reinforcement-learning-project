@@ -226,7 +226,6 @@ class ForestFireEnv(gym.Env):
         truck_amount=35.0,
         dry_rate=0.2,
         reward_weights=None,
-        **kwargs
     ):
         super().__init__()
         self.grid_size = grid_size

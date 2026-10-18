@@ -8,7 +8,6 @@ Ahmet Alper Basturk
 import time
 import argparse
 import os
-import torch
 import pygame
 from forest_fire_env import ForestFireEnv
 from DQN import DQNAgent

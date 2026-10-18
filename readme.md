@@ -20,7 +20,7 @@ python train_and_evaluate.py --algo rainbow --episodes 20000
 Command-line Options:
 
 ```bash
---algo: Choose from dqn, ddqn, rainbow, or all (runs each agent sequentially).--episodes: Number of training episodes per algorithm (default: 20000).--skip-train: Skip training and evaluate existing saved agent checkpoints.
+--algo: Choose from dqn, ddqn, rainbow, all (runs each agent sequentially), or plot-only. --episodes: Number of training episodes per algorithm (default: 20000). --eval-episodes: Evaluation episodes (default: 200). --grid-size: Grid dimension GxG (default: 15). --window: Rolling window for training curves(default: 100). --skip-train: Skip training and evaluate existing saved agent checkpoints.
 ```
 
  3. **Standalone Training:** To train a single agent directly and save diagnostic plots and models:
@@ -29,12 +29,23 @@ Command-line Options:
  python train.py --algo rainbow --episodes 20000
  ```
 
+ Command-line Options:
+
+```bash
+--algo: Choose from dqn, ddqn or rainbow (default: rainbow). --episodes: Number of training episodes per algorithm (default: 10000). --grid-size: Grid dimension GxG (default: 15). --window: Rolling window for training curves (default: 100).
+```
+
 4. **Visual Playback Simulation:** To render and visualize a saved agent model performing fire suppression using Pygame:
 
 ```bash
 python agent_sim.py --algo rainbow --checkpoint ./checkpoints/rainbow_wildfire_final.pth
 ```
 
+ Command-line Options:
+
+```bash
+--algo: Choose from dqn, ddqn or rainbow (default: rainbow). --checkpoint: Path to saved agent checkpoint (.pth file) (default: ./checkpoints/rainbow_wildfire_ep10000.pth). --grid-size: Grid size matching the training run (default: 15). --delay: Delay in seconds per step for Pygame visual playback (default: 0.3). --save-frames: Whether to save simulation frames as images
+```
 
 5. **Environment Simulation:** To launch an interactive manual session of the wildfire environment (press R during execution to trigger live weather events like rain):
 
