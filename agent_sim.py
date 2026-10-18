@@ -1,3 +1,10 @@
+"""
+Axel Bechtel
+Jesper Wentzell
+Pieree Kasparian
+Ahmet Alper Basturk
+"""
+
 import time
 import argparse
 import os
@@ -37,11 +44,11 @@ def main():
     env = ForestFireEnv(render_mode="human", grid_size=args.grid_size, max_steps=10000)
     action_size = env.action_space.n
     
-    # FIX 1: Extract spatial and global sizes from the new Dict observation space
+    # Extract structural dimensions from Dict observation space
     num_spatial = env.observation_space["spatial"].shape[0]
     num_global = env.observation_space["global"].shape[0]
 
-    # FIX 2: Instantiate Agent with the two-headed network parameters
+    # Instantiate selected algorithm agent
     if args.algo == 'rainbow':
         agent = RainbowAgent(action_size, args.grid_size, num_spatial, num_global)
     elif args.algo == 'ddqn':
@@ -49,19 +56,18 @@ def main():
     else:
         agent = DQNAgent(action_size, args.grid_size, num_spatial, num_global)
 
-    # Load Checkpoint
+    # Load trained model parameters from checkpoint
     print(f"Loading checkpoint from: {args.checkpoint}")
     agent.load_checkpoint(args.checkpoint)
 
-    # Force pure exploitation mode (zero random exploration for standard DQN)
+    # Disable epsilon-greedy exploration for deterministic evaluation
     if hasattr(agent, 'epsilon'):
         agent.epsilon = 0.0
 
-    # CRITICAL FIX 3: Ensure network evaluation mode. 
-    # For Rainbow DQN, this disables the stochasticity in the Noisy Networks!
+    # Ensure network is in evaluation mode (disables NoisyNet parameter noise in Rainbow DQN)
     agent.q_network.eval()
 
-    # Run Evaluation Episode
+    # Run evaluation simulation episode
     state, info = env.reset()
     total_reward = 0.0
     step_count = 0
@@ -72,15 +78,14 @@ def main():
     while not done:
         step_count += 1
 
-        # Fetch legal action mask and select greedy action
+        # Fetch legal action mask to prevent invalid actions during greedy selection
         mask = env.action_masks()
         action = agent.act(state, action_mask=mask)
 
-        # Step environment
         next_state, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
 
-        # Render visual frame using ForestFireRenderer
+        # Render visual frame
         env.render()
 
         if args.save_frames:

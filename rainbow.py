@@ -1,3 +1,10 @@
+"""
+Axel Bechtel
+Jesper Wentzell
+Pieree Kasparian
+Ahmet Alper Basturk
+"""
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -13,8 +20,8 @@ class RainbowAgent:
         
         self.n_step = 3
         self.num_atoms = 51
-        self.v_min = -10.0   # Updated for normalized rewards
-        self.v_max = 2.0     # Updated for normalized rewards
+        self.v_min = -10.0   # Lower bound of distributional value support
+        self.v_max = 2.0     # Upper bound of distributional value support
         self.support = torch.linspace(self.v_min, self.v_max, self.num_atoms).to(device)
         self.delta_z = (self.v_max - self.v_min) / (self.num_atoms - 1)
         
@@ -35,6 +42,8 @@ class RainbowAgent:
         
         with torch.no_grad():
             dist = self.q_network(sp_tensor, gl_tensor)
+
+            # Expected Q-value calculation: Q(s,a) = sum_i z_i * p_i(s,a)
             q_values = (dist * self.support).sum(2)
             
             if action_mask is not None:
@@ -56,14 +65,17 @@ class RainbowAgent:
         self.beta = min(1.0, self.beta + self.beta_increment_per_sampling)
         
         with torch.no_grad():
+            # Double Q-learning action selection on next states using online network
             next_dist_online = self.q_network(next_sp_states, next_gl_states)
             next_q_online = (next_dist_online * self.support).sum(2)
             next_q_online[~next_masks] = -float('inf')
             next_actions = next_q_online.argmax(dim=1)
-            
+
+            # Evaluate action distribution using target network
             next_dist_target = self.target_network(next_sp_states, next_gl_states)
             next_dist = next_dist_target[range(self.batch_size), next_actions]
-            
+
+            # C51 Distributional Bellman update projection: T z_j = r + (1 - done) * gamma^n * z_j
             T_z = rewards + (1 - dones) * (self.gamma ** self.n_step) * self.support.unsqueeze(0)
             T_z = T_z.clamp(self.v_min, self.v_max)
             
@@ -77,7 +89,8 @@ class RainbowAgent:
             same_mask = (l == u)
             weight_l[same_mask] = 1.0
             weight_u[same_mask] = 0.0
-            
+
+            # Project probability distribution onto fixed support atoms
             offset = torch.linspace(0, (self.batch_size - 1) * self.num_atoms, self.batch_size).long().unsqueeze(1).to(device)
             proj_dist = torch.zeros(next_dist.size()).to(device)
             proj_dist.view(-1).index_add_(0, (l + offset).view(-1), (next_dist * (u.float() - b)).view(-1))
@@ -85,14 +98,16 @@ class RainbowAgent:
 
         dist = self.q_network(sp_states, gl_states)
         action_dist = dist[range(self.batch_size), actions.squeeze()]
-        
+
+        # Categorical cross-entropy loss weighted by importance-sampling weights
         elementwise_loss = -(proj_dist * action_dist.clamp(min=1e-5).log()).sum(1)
         loss = (elementwise_loss * weights.squeeze()).mean()
         
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        
+
+        # Update transition priorities in prioritized replay buffer using absolute loss
         self.memory.update_priorities(idxs, elementwise_loss.detach().cpu().numpy() + 1e-6)
 
     def save_checkpoint(self, filepath):

@@ -1,3 +1,10 @@
+"""
+Axel Bechtel
+Jesper Wentzell
+Pieree Kasparian
+Ahmet Alper Basturk
+"""
+
 import os
 import csv
 import argparse
@@ -61,6 +68,7 @@ def parse_args():
 
 
 def set_global_seeds(seed: int):
+    # Sets global random seeds across Python, NumPy, and PyTorch for exact reproducibility
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -69,7 +77,7 @@ def set_global_seeds(seed: int):
 
 
 def rolling_stats(data, window=100):
-    """Compute rolling mean and rolling standard deviation for shaded bands."""
+    """Computes rolling mean and rolling standard deviation for shaded confidence bands."""
     arr = np.asarray(data, dtype=np.float64)
     means = np.empty_like(arr)
     stds = np.empty_like(arr)
@@ -99,7 +107,7 @@ def make_agent(algo: str, action_size: int, grid_size: int, num_spatial: int = 5
 
 @torch.no_grad()
 def select_greedy_action(agent, algo: str, state: dict, action_mask: np.ndarray) -> int:
-    """Deterministic greedy action selection for evaluation (no epsilon, no NoisyNet noise)."""
+    """Performs deterministic greedy action selection during evaluation (disables epsilon exploration and NoisyNet noise)."""
     sp_tensor = torch.tensor(np.array(state["spatial"]), dtype=torch.float32, device=device).unsqueeze(0)
     gl_tensor = torch.tensor(np.array(state["global"]), dtype=torch.float32, device=device).unsqueeze(0)
     mask_tensor = torch.tensor(action_mask, dtype=torch.bool, device=device)
@@ -148,7 +156,7 @@ def check_spatial_precision(env: ForestFireEnv, spec) -> tuple[bool, bool]:
 
 
 def train_single_agent(algo: str, args) -> dict:
-    """Train one agent, save checkpoints & training CSV, and return training history dict."""
+    """Trains a single agent, saves checkpoints and training CSV telemetry, and returns the history dict."""
     set_global_seeds(args.seed)
     env = ForestFireEnv(grid_size=args.grid_size)
     action_size = env.action_space.n
@@ -277,7 +285,7 @@ def train_single_agent(algo: str, args) -> dict:
 
 
 def evaluate_single_agent(algo: str, args) -> dict:
-    """Evaluate a trained agent greedily across fixed test seeds and save evaluation CSV."""
+    """Evaluates a trained agent greedily across fixed paired test seeds and saves evaluation CSV metrics."""
     env = ForestFireEnv(grid_size=args.grid_size)
     action_size = env.action_space.n
     agent = make_agent(algo, action_size, args.grid_size, num_spatial=5, num_global=6)
@@ -434,11 +442,10 @@ def load_available_results(args) -> tuple[dict, dict]:
     return all_train, all_eval
 
 
-# =====================================================================
 # REPORT-READY STANDALONE PLOTTING FUNCTIONS (300 DPI)
-# =====================================================================
 
 def plot_training_curve(all_train: dict, key: str, ylabel: str, title: str, filename: str, window: int, ylim=None):
+    """Generates a publication-ready training curve plot with rolling means and shaded standard deviation bands."""
     if not all_train:
         return
     fig, ax = plt.subplots(figsize=(7.5, 4.5))
@@ -470,6 +477,7 @@ def plot_training_curve(all_train: dict, key: str, ylabel: str, title: str, file
 
 
 def plot_training_action_evolution(all_train: dict, window: int):
+    """Plots stacked area charts showing how action type selection evolves over training episodes."""
     avail = [a for a in ALGO_ORDER if a in all_train]
     if not avail:
         return
@@ -513,6 +521,7 @@ def plot_training_action_evolution(all_train: dict, window: int):
 
 
 def plot_eval_outcome_bars(all_eval: dict):
+    """Generates grouped bar charts comparing evaluation success rates and fuel preservation."""
     avail = [a for a in ALGO_ORDER if a in all_eval]
     if not avail:
         return
@@ -564,6 +573,7 @@ def plot_eval_outcome_bars(all_eval: dict):
 
 
 def plot_eval_fuel_distribution(all_eval: dict):
+    """Generates box plots illustrating the distribution of preserved forest fuel across algorithms."""
     avail = [a for a in ALGO_ORDER if a in all_eval]
     if not avail:
         return
@@ -613,6 +623,7 @@ def plot_eval_fuel_distribution(all_eval: dict):
 
 
 def plot_eval_tactical_precision(all_eval: dict):
+    """Generates comparative plots for action share distribution and spatial targeting precision."""
     avail = [a for a in ALGO_ORDER if a in all_eval]
     if not avail:
         return
@@ -684,6 +695,7 @@ def plot_eval_tactical_precision(all_eval: dict):
 
 
 def export_summary_table(all_eval: dict, args):
+    """Exports structured evaluation summary tables in both CSV and Markdown formats."""
     avail = [a for a in ALGO_ORDER if a in all_eval]
     if not avail:
         return
@@ -734,7 +746,7 @@ def main():
     os.makedirs("./results", exist_ok=True)
     os.makedirs("./report_figures", exist_ok=True)
 
-    # 1. Run training & evaluation for the selected algorithm(s)
+    # Execute training and evaluation pipeline for selected algorithm(s)
     if args.algo != "plot-only":
         target_algos = ALGO_ORDER if args.algo == "all" else [args.algo]
         for algo in target_algos:
@@ -742,7 +754,7 @@ def main():
                 train_single_agent(algo, args)
             evaluate_single_agent(algo, args)
 
-    # 2. Load all completed CSVs in ./results/ and generate/update report figures
+    # Load all completed CSVs from ./results/ and generate publication-ready figures
     all_train, all_eval = load_available_results(args)
     completed_train = [ALGO_LABELS[a] for a in ALGO_ORDER if a in all_train]
     completed_eval = [ALGO_LABELS[a] for a in ALGO_ORDER if a in all_eval]

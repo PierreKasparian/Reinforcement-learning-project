@@ -1,3 +1,10 @@
+"""
+Axel Bechtel
+Jesper Wentzell
+Pieree Kasparian
+Ahmet Alper Basturk
+"""
+
 import torch
 import torch.nn as nn
 from DQN import DQNAgent
@@ -19,9 +26,12 @@ class DDQNAgent(DQNAgent):
         with torch.no_grad():
             next_q_values_online = self.q_network(next_sp_states, next_gl_states)
             next_q_values_online[~next_masks] = -1e8 
-            
+
+            # Double DQN: Use the online network to select the best next action (decoupling selection from evaluation)
             best_next_actions = next_q_values_online.argmax(dim=1).unsqueeze(1)
-            
+
+            # Evaluate the selected action using the stable target network to eliminate maximization bias:
+            # y_t = r + gamma * (1 - done) * Q_target(s', argmax_a Q_online(s', a))
             max_next_q_values = self.target_network(next_sp_states, next_gl_states).gather(1, best_next_actions)
             target_q_values = rewards + (self.gamma * max_next_q_values * (1 - dones))
             
