@@ -1,3 +1,10 @@
+"""
+Axel Bechtel
+Jesper Wentzell
+Pieree Kasparian
+Ahmet Alper Basturk
+"""
+
 import time
 import pygame
 from forest_fire_env import ForestFireEnv
@@ -11,7 +18,7 @@ SIMULATION_DELAY = 0.25  # Seconds per step (lower = faster)
 LOG_FILE_PATH = "simulation_log.txt"
 
 # Fire Dynamics
-P_SPREAD = 0.05           # Base fire spread probability
+P_SPREAD = 0.05          # Base fire spread probability
 MAX_FUEL = 100.0         # Maximum fuel per cell
 MAX_MOISTURE = 100.0     # Moisture cap per cell
 BASE_BURN_RATE = 1.0     # Initial burn rate for new fires
@@ -68,7 +75,7 @@ if __name__ == "__main__":
         while running:
             step_count += 1
 
-            # Advance environmental state & fire spread
+            # Advance environmental state & fire spread using a NOOP action (action index 0)
             obs, reward, terminated, truncated, info = env.step(0)
             env.render()
 
@@ -98,7 +105,7 @@ if __name__ == "__main__":
             log_file.write(log_line)
             log_file.flush()
 
-            # Handle Pygame interactive events
+            # Handle Pygame interactive events for live simulation control
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
