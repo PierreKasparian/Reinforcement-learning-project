@@ -1,3 +1,10 @@
+"""
+Axel Bechtel
+Jesper Wentzell
+Pieree Kasparian
+Ahmet Alper Basturk
+"""
+
 import os
 import csv
 import argparse
@@ -46,7 +53,8 @@ def main():
     action_size = env.action_space.n 
     num_spatial = env.observation_space["spatial"].shape[0]
     num_global = env.observation_space["global"].shape[0]
-    
+
+    # Instantiate the selected deep reinforcement learning agent
     if args.algo == 'rainbow':
         agent = RainbowAgent(action_size, args.grid_size, num_spatial, num_global)
     elif args.algo == 'ddqn':
@@ -126,16 +134,16 @@ def main():
             ep_cost_reward += rc.get("action_cost", 0.0)
             ep_term_reward += rc.get("terminal", 0.0)
 
-        # Decay epsilon (if applicable and past warmup)
+        # Decay epsilon exploration rate if applicable and past warmup threshold
         warmup = getattr(agent, 'warmup_steps', 0)
         if hasattr(agent, 'epsilon') and len(agent.memory) >= warmup:
             agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)
 
-        # Fallback episode-based target sync if step-based target sync isn't configured
+        # Fallback episode-based target network sync if step-based sync isn't configured
         if not hasattr(agent, 'target_update_steps') and (episode + 1) % target_update_freq == 0:
             agent.target_network.load_state_dict(agent.q_network.state_dict())
 
-        # Record episode-level outcomes
+        # Record episode-level outcome telemetry
         rm = next_info.get("reward_metrics", {})
         outcome = rm.get("outcome", "unknown")
         preserved_pct = rm.get("preserved_fraction", 0.0) * 100.0
@@ -178,7 +186,7 @@ def main():
 
     env.close()
 
-    # Save per-episode metrics to CSV for cross-algorithm plotting
+    # Save per-episode metrics to CSV for cross-algorithm logging and plotting
     csv_path = f"./plots/{args.algo}_{args.grid_size}x{args.grid_size}_metrics.csv"
     with open(csv_path, mode='w', newline='') as f:
         writer = csv.writer(f)
