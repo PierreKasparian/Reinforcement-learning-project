@@ -1,3 +1,10 @@
+"""
+Axel Bechtel
+Jesper Wentzell
+Pieree Kasparian
+Ahmet Alper Basturk
+"""
+
 import enum
 from dataclasses import dataclass
 from typing import Tuple
@@ -322,7 +329,7 @@ class ForestFireEnv(gym.Env):
             self.wind.is_active = False
             self.wind.current_speed = 0.0
 
-        # Initialize rain (keep rain off during pre-burn so it doesn't extinguish the initial seed)
+        # Initialize rain
         self.rain = Rain(
             grid_size=self.grid_size,
             max_intensity=self.rain_intensity,
@@ -349,8 +356,7 @@ class ForestFireEnv(gym.Env):
         r = int(self.np_random.integers(center - spawn_radius, center + spawn_radius + 1))
         c = int(self.np_random.integers(center - spawn_radius, center + spawn_radius + 1))
 
-        # Spawn a 3-cell L-shaped cluster (spans 2 rows and 2 columns).
-        # No 1D horizontal/vertical WATER_DROP or single-cell FIRE_TRUCK can hit all 3 cells on Step 1.
+        # Spawn an initial 3-cell L-shaped cluster in the center
         dr = int(self.np_random.choice([-1, 1]))
         dc = int(self.np_random.choice([-1, 1]))
         core_cells = [
@@ -374,6 +380,7 @@ class ForestFireEnv(gym.Env):
         return DIRECTION_OFFSETS[self.wind.direction]
 
     def _calculate_wind_modifier(self, source_r: int, source_c: int, target_r: int, target_c: int) -> float:
+        """Calculates wind alignment modifier: 1.0 + (alignment * wind_speed * wind_factor / distance)."""
         spread_dr = target_r - source_r
         spread_dc = target_c - source_c
 
@@ -466,6 +473,7 @@ class ForestFireEnv(gym.Env):
     # ------- Actions -------
 
     def _action_cost(self, spec: ActionSpec) -> int:
+        # Continuing an ongoing firebreak project along the exact same line costs 0 budget
         if (
             spec.type == ActionType.FIREBREAK
             and self.active_project_spec is not None
@@ -599,6 +607,7 @@ class ForestFireEnv(gym.Env):
     def _spread_fire(self):
         burning_mask = (self.grid == CellState.BURNING)
 
+        # Extinction probability based on moisture: p_ext = moisture / (moisture + 6.0 * burn_rate)
         p_extinguish = np.zeros_like(self.moisture)
         moisture_active = burning_mask & (self.moisture > 0)
         p_extinguish[moisture_active] = self.moisture[moisture_active] / (
@@ -614,8 +623,8 @@ class ForestFireEnv(gym.Env):
         still_burning_mask = burning_mask & ~extinguished_mask
         self.moisture[still_burning_mask] = np.maximum(0.0, self.moisture[still_burning_mask] - 2.0)
 
+        # Fuel consumption and logistic burn rate growth
         self.fuel[still_burning_mask] -= self.burn_rate[still_burning_mask]
-
         curr_rate = self.burn_rate[still_burning_mask]
         logistic_delta = self.burn_growth_rate * curr_rate * (1.0 - (curr_rate / self.max_burn_rate))
         self.burn_rate[still_burning_mask] = np.minimum(self.max_burn_rate, curr_rate + logistic_delta)
@@ -628,6 +637,7 @@ class ForestFireEnv(gym.Env):
 
         new_fires = set()
 
+        # Stochastic ignition of neighboring cells from burnout or active combustion
         burnout_coords = np.argwhere(burnout_mask)
         for r, c in burnout_coords:
             intensity_ratio = burnout_rates[r, c] / self.max_burn_rate
@@ -699,6 +709,8 @@ class ForestFireEnv(gym.Env):
         truncated,
         burn_rate_suppressed,
     ):
+
+        # Computes normalized multi-component reward R_t (fire damage, action cost, suppression, time penalty, terminal bonus)
         w = self.reward_weights
         fuel_after = float(np.sum(self.fuel, dtype=np.float64))
         fuel_scale = max(self.initial_total_fuel, 1e-8)
