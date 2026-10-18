@@ -1,3 +1,10 @@
+"""
+Axel Bechtel
+Jesper Wentzell
+Pieree Kasparian
+Ahmet Alper Basturk
+"""
+
 import numpy as np
 import pygame
 
@@ -30,11 +37,13 @@ class ForestFireRenderer:
         self.font = None
 
     def _get_fire_color(self, burn_rate, max_expected_rate=20.0):
+        # Linearly interpolates fire cell color from yellow (low burn intensity) to dark red (high burn intensity)
         norm_rate = np.clip(burn_rate / max_expected_rate, 0.0, 1.0)
         color = (1.0 - norm_rate) * self.LOW_FIRE_COLOR + norm_rate * self.HIGH_FIRE_COLOR
         return tuple(color.astype(int))
 
     def _get_healthy_color(self, moisture_level):
+        # Interpolates healthy vegetation color based on moisture level (forest green to water blue tint)
         norm_m = np.clip(moisture_level / self.max_moisture, 0.0, 1.0)
         color = (1.0 - norm_m) * self.HEALTHY_BASE + norm_m * self.WATER_TINT
         return tuple(color.astype(int))
@@ -93,19 +102,16 @@ class ForestFireRenderer:
         if wind_speed > 0.0 and self.cell_size >= 15:
             wind_overlay = pygame.Surface((self.window_size, self.window_size), pygame.SRCALPHA)
             
-            # Sample every few cells or draw on every cell depending on grid size
-            step_stride = max(1, self.grid_size // 10)  # e.g., sample roughly 10x10 arrows max for clarity
+            step_stride = max(1, self.grid_size // 10)  # Sample roughly 10x10 vector arrows max for visual clarity
             for r in range(0, self.grid_size, step_stride):
                 for c in range(0, self.grid_size, step_stride):
                     # Center of the cell
                     cx = c * self.cell_size + self.cell_size // 2
                     cy = r * self.cell_size + self.cell_size // 2
                     
-                    # If wind_field matrix is passed, use local vector; otherwise use global approximation
                     if wind_field is not None:
                         dx, dy = wind_field[r, c]
                     else:
-                        # Fallback approximation based on global wind direction/speed
                         dx, dy = 0.0, 0.0
                         if wind_direction == "NORTH": dy = -wind_speed
                         elif wind_direction == "SOUTH": dy = wind_speed
@@ -135,7 +141,6 @@ class ForestFireRenderer:
                 for c in range(self.grid_size):
                     cell_rain_val = rain_field[r, c]
                     if cell_rain_val > 0.0:
-                        # Draw a semi-transparent blue tint over wet/storm cells scaled by intensity
                         alpha = int(np.clip(cell_rain_val * 25, 10, 120))
                         cell_rect = pygame.Rect(
                             c * self.cell_size,
@@ -145,7 +150,6 @@ class ForestFireRenderer:
                         )
                         pygame.draw.rect(rain_overlay, (50, 100, 200, alpha), cell_rect)
 
-                        # Draw subtle rain streaks inside active storm cells if cell size is large enough
                         if self.cell_size >= 12 and (r + c + ticks // 100) % 3 == 0:
                             rx = c * self.cell_size + self.cell_size // 2
                             ry = r * self.cell_size + self.cell_size // 2
@@ -161,7 +165,6 @@ class ForestFireRenderer:
 
         # Draw Telemetry HUD Overlay
         if mode == "human" and self.font is not None:
-            # Check wind_info first; fallback to direction/speed if wind_info is None
             if wind_info is not None:
                 wind_text = f"WIND: {wind_info}"
             elif wind_direction in ["NONE", "CALM"] or wind_speed == 0.0:
@@ -175,7 +178,6 @@ class ForestFireRenderer:
             hud_bg_color = (220, 240, 255) if rain_active else (255, 255, 255)
             text_surface = self.font.render(hud_text, True, (0, 0, 0), hud_bg_color)
             
-            # Padding around HUD text box
             padding_rect = text_surface.get_rect(topleft=(10, 10)).inflate(8, 6)
             pygame.draw.rect(canvas, hud_bg_color, padding_rect)
             pygame.draw.rect(canvas, (100, 100, 100), padding_rect, 1)
