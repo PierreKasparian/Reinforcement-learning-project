@@ -1,3 +1,10 @@
+"""
+Axel Bechtel
+Jesper Wentzell
+Pieree Kasparian
+Ahmet Alper Basturk
+"""
+
 import torch
 import numpy as np
 import random
@@ -17,7 +24,7 @@ class ReplayBuffer:
         batch = random.sample(self.buffer, batch_size)
         states, actions, rewards, next_states, dones, next_masks = zip(*batch)
         
-        # Split dict observations
+        # Split dict observations into spatial grid tensors and global feature tensors
         states_sp = torch.tensor(np.array([s["spatial"] for s in states]), dtype=torch.float32).to(device)
         states_gl = torch.tensor(np.array([s["global"] for s in states]), dtype=torch.float32).to(device)
         
@@ -43,7 +50,7 @@ class ReplayBuffer:
         with open(filepath, 'rb') as f: self.buffer = pickle.load(f)
 
 class SumTree:
-    # (Unchanged from original code)
+    """Binary Sum Tree data structure for efficient O(log N) prioritized transition sampling."""
     def __init__(self, capacity):
         self.capacity = capacity
         self.tree = np.zeros(2 * capacity - 1)
@@ -79,7 +86,7 @@ class SumTree:
 class PrioritizedReplayBuffer:
     def __init__(self, capacity, alpha=0.6, n_step=3, gamma=0.99):
         self.capacity = capacity
-        self.alpha = alpha
+        self.alpha = alpha # Prioritization exponent determining how much prioritization is used (0 = uniform, 1 = full)
         self.tree = SumTree(capacity)
         self.max_priority = 1.0
         self.n_step = n_step
@@ -98,6 +105,7 @@ class PrioritizedReplayBuffer:
                 self.n_step_buffer.popleft()
 
     def _get_n_step_info(self):
+        # Computes n-step discounted accumulated return: R = sum_{k=0}^{n-1} gamma^k * r_{t+k}
         R = 0
         for idx, transition in enumerate(self.n_step_buffer):
             R += transition[2] * (self.gamma ** idx)
@@ -112,6 +120,7 @@ class PrioritizedReplayBuffer:
         segment = self.tree.tree[0] / batch_size
         priorities = []
 
+        # Stratified sampling over priority segments
         for i in range(batch_size):
             a, b = segment * i, segment * (i + 1)
             s = random.uniform(a, b)
@@ -121,12 +130,13 @@ class PrioritizedReplayBuffer:
             idxs.append(idx)
 
         sampling_probabilities = np.array(priorities) / self.tree.tree[0]
+
+        # Compute importance-sampling (IS) weights: w_i = (N * P(i))^(-beta) / max(w)
         weights = np.power(self.tree.n_entries * sampling_probabilities, -beta)
         weights /= weights.max()
 
         states, actions, rewards, next_states, dones, next_masks = zip(*batch)
         
-        # Split dict observations
         states_sp = torch.tensor(np.array([s["spatial"] for s in states]), dtype=torch.float32).to(device)
         states_gl = torch.tensor(np.array([s["global"] for s in states]), dtype=torch.float32).to(device)
         
@@ -145,6 +155,7 @@ class PrioritizedReplayBuffer:
         )
 
     def update_priorities(self, idxs, priorities):
+        # Updates transition priorities in the SumTree using absolute TD errors / loss raised to power alpha
         for idx, p in zip(idxs, priorities):
             self.max_priority = max(self.max_priority, float(p))
             self.tree.update(idx, p ** self.alpha)
