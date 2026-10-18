@@ -203,19 +203,16 @@ class ForestFireEnv(gym.Env):
         render_mode=None,
         grid_size=15,
         p_spread=0.032,
-        max_steps=300,
         max_fuel=100.0,
         max_moisture=100.0,
         base_burn_rate=2.0,
         burn_growth_rate=0.20,
         max_burn_rate=25.0,
-        wind_speed=1.0,
         wind_factor=0.05,
         rain_intensity=5.0,
         rain_prob=0.1,
         budget_replenish_rate=1.5,
         water_drop_cooldown=4,
-        cooldown_counter=0,
         aircraft_turnaround_steps=3,
         num_fire_trucks=2,
         truck_turnaround_steps=2,
@@ -242,9 +239,6 @@ class ForestFireEnv(gym.Env):
 
         self.line_half_length = max(1, self.grid_size // 12)
 
-        self.min_initial_fires = 4
-        self.max_initial_fires = 5
-
         # Continuous state parameters
         self.max_fuel = max_fuel
         self.max_moisture = max_moisture
@@ -254,7 +248,6 @@ class ForestFireEnv(gym.Env):
 
         # Wind dynamics
         self.wind_factor = wind_factor
-        self.default_wind_speed = wind_speed
         self.wind = Wind(grid_size=self.grid_size, max_speed=3.0)
 
         # Rain dynamics
@@ -272,7 +265,7 @@ class ForestFireEnv(gym.Env):
         self.truck_amount = truck_amount
         self.budget_replenish_rate = budget_replenish_rate
         self.water_drop_cooldown = water_drop_cooldown
-        self.cooldown_counter = cooldown_counter
+        self.cooldown_counter = 0
 
         # Vehicle turnaround
         self.aircraft_turnaround_steps = max(1, int(aircraft_turnaround_steps))

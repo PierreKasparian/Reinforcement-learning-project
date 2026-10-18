@@ -18,7 +18,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate Trained RL Agent on Wildfire Environment")
     parser.add_argument('--algo', type=str, default='rainbow', choices=['dqn', 'ddqn', 'rainbow'],
                         help='Algorithm of saved checkpoint')
-    parser.add_argument('--checkpoint', type=str, default='./checkpoints/rainbow_wildfire_ep10000.pth',
+    parser.add_argument('--checkpoint', type=str, default='./checkpoints/rainbow_wildfire_final.pth',
                         help='Path to saved agent checkpoint (.pth file)')
     # Updated default to 15 to match the new training script
     parser.add_argument('--grid-size', type=int, default=15,
@@ -40,7 +40,7 @@ def main():
                 os.remove(os.path.join(frame_dir, f))
 
     # Environment Setup
-    env = ForestFireEnv(render_mode="human", grid_size=args.grid_size, max_steps=10000)
+    env = ForestFireEnv(render_mode="human", grid_size=args.grid_size)
     action_size = env.action_space.n
     
     # Extract structural dimensions from Dict observation space
