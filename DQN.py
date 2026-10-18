@@ -1,3 +1,10 @@
+"""
+Axel Bechtel
+Jesper Wentzell
+Pieree Kasparian
+Ahmet Alper Basturk
+"""
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -32,7 +39,7 @@ class DQNAgent:
     def act(self, state, action_mask=None):
         if random.random() < self.epsilon:
             if action_mask is not None:
-                # Group valid actions
+                # Group valid actions by type so random exploration selects uniformly among action types rather than flat indices
                 g2 = (self.action_size - 1) // 5
                 type_slices = [
                     np.array([0]) if action_mask[0] else np.array([], dtype=int),
@@ -54,6 +61,7 @@ class DQNAgent:
             q_values = self.q_network(sp_tensor, gl_tensor)
             
             if action_mask is not None:
+                # Mask out illegal actions by setting their Q-values to an extremely low penalty
                 mask_tensor = torch.tensor(action_mask, dtype=torch.bool, device=device)
                 q_values[0, ~mask_tensor] = -1e8
                 
@@ -76,10 +84,12 @@ class DQNAgent:
         with torch.no_grad():
             next_q_values = self.target_network(next_sp_states, next_gl_states)
             next_q_values[~next_masks] = -1e8
-            
+
+            # Compute DQN bootstrap target: y_t = r + gamma * (1 - done) * max_a Q_target(s', a)
             max_next_q_values = next_q_values.max(1)[0].unsqueeze(1)
             target_q_values = rewards + (self.gamma * max_next_q_values * (1 - dones))
-            
+
+        # Fit Q-values to targets using Huber loss (Smooth L1 Loss)
         loss = nn.SmoothL1Loss()(q_values, target_q_values)
         
         self.optimizer.zero_grad()
